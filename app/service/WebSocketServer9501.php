@@ -2,8 +2,8 @@
 /**
  * Created by PhpStorm.
  * User: Asus
- * Date: 2018/11/12
- * Time: 10:36
+ * Date: 2019/3/1
+ * Time: 17:16
  */
 
 namespace app\service;
@@ -12,24 +12,18 @@ use app\auth\Auth;
 use app\handler\WebSocket;
 use app\process\GatewayConnector;
 use im\core\Container;
-use \im\core\service\Server as BaseServer;
-use Swoole\Process;
+use im\core\service\Server;
 use swoole_process;
 
-/**
- * websocket服务
- * Class WebSocketServer
- * @package app\service
- */
-class WebSocketServer83 extends BaseServer
+class WebSocketServer9501 extends Server
 {
 	/**
-	 * WebSocket类型
+	 * SwooleServer类型
 	 * @var string
 	 */
 	protected $serverType   = 'socket';
 	
-	protected $port         = 83;
+	protected $port         = 9501;
 	
 	protected $gateway_host = '127.0.0.1';//网关的地址
 	
@@ -56,8 +50,8 @@ class WebSocketServer83 extends BaseServer
 			'worker_num'               => 4,    //worker process num
 			'backlog'                  => 128,   //listen backlog
 			'daemonize'                => 0,
-			'log_file'                => RUNTIME . 'log/server_ws_log.log',
-			'log_level'                => 2,//0 => SWOOLE_LOG_DEBUG1 => SWOOLE_LOG_TRACE2 => SWOOLE_LOG_INFO3 => SWOOLE_LOG_NOTICE4 => SWOOLE_LOG_WARNING5 => SWOOLE_LOG_ERROR
+			'log_file'                 => RUNTIME . 'log/ws84_server.log',
+			'log_level'                => 1,//0 => SWOOLE_LOG_DEBUG1 => SWOOLE_LOG_TRACE2 => SWOOLE_LOG_INFO3 => SWOOLE_LOG_NOTICE4 => SWOOLE_LOG_WARNING5 => SWOOLE_LOG_ERROR
 			'max_connection'           => 10000,//不填与服务器ulimit -n相同，默认不超过10000，一个连接约224bytes
 			'heartbeat_idle_time'      => 15,//15秒无数据就强制结束他
 			'heartbeat_check_interval' => 10,//每60秒进行一次轮训检测
@@ -73,6 +67,8 @@ class WebSocketServer83 extends BaseServer
 			 * 5，UID分配，需要用户代码中调用 Server->bind() 将一个连接绑定1个uid。然后底层根据UID的值分配到不同的Worker进程。算法为 UID % worker_num，如果需要使用字符串作为UID，可以使用crc32(UID_STRING)
 			 * 7，stream模式，空闲的Worker会accept连接，并接受Reactor的新请求
 			 */
+			//			'pipe_buffer_size' => 64 * 1024 *1024, //必须为数字，调整管道通信的内存缓存区长度。Swoole使用Unix Socket实现进程间通信，没卵用，被废弃
+			//			'task_ipc_mode'            => '2',
 			'max_coroutine'            => 10000,
 			//			'buffer_high_watermark' => 8 * 1024 * 1024,//控制FD缓存区高水位线，单位为字节
 			//			'send_yield'               => true,//发送数据协程调度
@@ -116,7 +112,7 @@ class WebSocketServer83 extends BaseServer
 				                      'option'       => $this->option,
 			                      ]);
 		}, false, SOCK_DGRAM);
-		$process->name('GatewayConnecter');
+		$process->name('Gateway');
 		$process->start();//启动子进程
 		// 设置回调
 		$obj = Container::get($this->messageHandler, ['process' => $process, 'auth' => Container::get(Auth::class)]);//官方代码直接调用方法，没有上下文，必须使用容器先创建对象

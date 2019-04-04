@@ -28,7 +28,7 @@ return [
 			'password'        => 'root',
 			// 端口
 			'hostport'        => 3306,
-			'prefix'          => 'kfk_',
+			'prefix'          => 'im_',
 			'charset'         => 'utf8mb4',
 			'break_reconnect' => true,//开启断线重连
 			// 连接dsn
@@ -38,9 +38,7 @@ return [
 	],
 	
 	'servers' => [//注册的服务
-	              'app_im'  => \app\service\Server::class,//app的im服务
-	              '83'      => \app\service\WebSocketServer83::class,//83端口ws
-	              '84'      => \app\service\WebSocketServer84::class,//84端口ws
+	              '9501'      => \app\service\WebSocketServer9501::class,//84端口ws
 	              'gateway' => \app\service\Gateway::class,//gateway服务
 	              'http'    => \app\service\Http::class,//http服务
 	],

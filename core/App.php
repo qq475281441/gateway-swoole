@@ -103,7 +103,7 @@ class App extends Container
 	private function runServer()
 	{
 		$class   = $this->sysServers[$this->server];
-		$options = ['daemonize' => $this->daemonize, 'pid_file' => RUNTIME . 'server_' . $this->server . '_.pid'];
+		$options = ['daemonize' => $this->daemonize, 'pid_file' => RUNTIME . 'pid_file/server_' . $this->server . '_.pid'];
 		
 		switch ($this->command) {
 			case 'start':

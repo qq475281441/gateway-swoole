@@ -237,7 +237,7 @@ class WebSocket extends MessageHandler
 			$this->console->error('>>>>>>>>>>>>>>>>>>>>>>>>发网关批量消息任务-给房间发消息');
 			foreach ($data['fd'] as $v) {
 				if ($serv->exist($v)) {
-					$data['data']['data']['content'] = rep_url($data['data']['data']['content']);
+					$data['data']['data']['content'] = $data['data']['data']['content'];
 					$serv->push($v, json_encode($data['data']));//向这些fd发消息
 				} else {
 					return $this->users->removeUser($data['fd']);
@@ -245,7 +245,7 @@ class WebSocket extends MessageHandler
 			}
 		} else if ($data['type'] == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息
 			if ($serv->exist($data['fd'])) {
-				$data['data']['data']['content'] = rep_url($data['data']['data']['content']);
+				$data['data']['data']['content'] =$data['data']['data']['content'];
 				$this->console->success(date('Y-m-d H:i:s', time()) . '>>>>5管道获取了任务准备发送');
 				
 				if (!is_array($data['data']['data']['content'])) {//不为数组时
@@ -340,62 +340,9 @@ class WebSocket extends MessageHandler
 						
 						break;
 					case 'report_detail':
-						//获取投诉订单详情
-						if ($userinfo === false) {
-							return $this->result($serv, $fd, '请先登录', 'text', 'no_login', 'sys');
-						}
-						$order_num = $data['order_num'];
-						go(function () use ($order_num, $serv, $fd) {
-							$report  = Db::name('report')->field('account_id,roll_money,report_id,account_id,order_num,amount,customer_contact,reason,report_finish,created_at,customer_phone')
-								->where('order_num', $order_num)->find();
-							$account = Db::name('account')->field('report_handle,head_img_url,show_name')->where('account_id', $report['account_id'])->find();
-							
-							if (!$report) {
-								return $this->result($serv, $fd, '投诉不存在', 'text', 'error', 'sys');
-							} else {
-								$t = 36 * 60 * 60;//投诉超时时间
-								if ($report['report_finish'] == "1" && $report['roll_money'] == "0") {
-									$report['state'] = "投诉已处理完成";
-								} else if ($report['report_finish'] != "1" && $report['roll_money'] == "1") {
-									$report['state'] = "正在退款";
-								} else if ($report['report_finish'] == "1" && $report['roll_money'] == "1") {
-									$report['state'] = "已办理退款,投诉已处理完成";
-								} else if (time() - $report['created_at'] > $t) {
-									$report['state'] = "投诉已经逾期";
-								} else {
-									$report['state'] = "双方交谈中";
-								}
-								$report['created_at'] = date('Y-m-d H:i:s', $report['created_at']);
-								
-								$report['show_name']        = $account['show_name'] ?: '快发卡商家';
-								$report['reason']           = '投诉原因：' . $report['reason'];
-								$report['customer_phone']   = '买家手机：' . $report['customer_phone'];
-								$report['customer_contact'] = '买家QQ：' . $report['customer_contact'];
-								$report['report_handle']    = $account['report_handle'];
-								$report['head_img_url']     = $account['head_img_url'];
-								return $this->result($serv, $fd, $report, 'report_detail', 'success', 'sys');
-							}
-						});
-						
 						break;
 					
 					case 'msg_list':
-						//获取聊天记录
-						if ($userinfo === false) {
-							return $this->result($serv, $fd, '请先登录', 'text', 'no_login', 'sys');
-						}
-						$order_num = $data['order_num'];
-						$page      = $data['page'] ?: 1;
-						$data      = Db::name('report_msg')->where('order_num', $order_num)->field('order_num,type,content,created_at,content_type')
-							->order('created_at desc')->paginate(20, false, ['page' => $page]);
-						
-						$data = $data->toArray();
-						foreach ($data['data'] as $k => $v) {
-							if ($v['content_type'] <> 'image') {
-								$data['data'][$k]['content'] = rep_url($v['content']);
-							}
-						}
-						return $this->result($serv, $fd, $data, 'msg_list', 'success', 'sys');
 						break;
 					default:
 						$serv->push($fd, 'pong');
