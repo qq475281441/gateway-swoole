@@ -22,6 +22,7 @@ use Swoole\Coroutine;
 use Swoole\MySQL;
 use Swoole\Process;
 use Swoole\Table;
+use swoole_http_request;
 use swoole_process;
 use swoole_server;
 use swoole_websocket_server;
@@ -33,7 +34,7 @@ class WebSocket extends MessageHandler
 	
 	protected $process;
 	
-	public    $serv_key = 0;//服务在网关的key
+	public    $serv_key        = 0;//服务在网关的key
 	
 	protected $console;
 	
@@ -44,6 +45,8 @@ class WebSocket extends MessageHandler
 	protected $user;
 	
 	protected $users;
+	
+	protected $_uidConnections = [];//uid映射链接
 	
 	/**
 	 * TestHandler constructor.
@@ -62,6 +65,52 @@ class WebSocket extends MessageHandler
 		$this->users    = new Users($this->redis, $this->table);
 		$this->serv_key = $this->auth->getServerKey();//创建key，才可以在所有worker中共享
 		RedisConnectPool::getInstance()->init();
+	}
+	
+	/**
+	 * ws握手
+	 * @param swoole_websocket_server $serv
+	 * @param swoole_http_request     $request
+	 * @return bool
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
+	 */
+	public function onOpen(swoole_websocket_server $serv, swoole_http_request $request)
+	{
+		$_GET = $request->get;
+		if (!isset($_GET['token']) || !isset($_GET['type'])) {
+			$this->result($serv, $request->fd, '缺少token或type', 'text', 'token_invalid', 'tips');
+			return $serv->close($request->fd);
+		}
+		if ($_GET['type'] == 'account' && !isset($_GET['authtype'])) {
+			$this->result($serv, $request->fd, '缺少authtype', 'text', 'token_invalid', 'tips');
+			return $serv->close($request->fd);
+		}
+		
+		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
+			//验证通过,在网关绑定uid
+			$this->bindAccountID($request->fd, $uid);
+		} else {
+			$this->result($serv, $request->fd, 'token无效', 'text', 'token_invalid', 'tips');
+		}
+	}
+	
+	/**
+	 * 链接绑定uid
+	 * @param $fd
+	 * @param $uid
+	 * @return int
+	 */
+	protected function bindAccountID($fd, $uid)
+	{
+		$req_data        = new GatewayProtocols();
+		$req_data->cmd   = GatewayProtocols::CMD_REGISTER_USER;
+		$req_data->fd    = $fd;
+		$req_data->data  = $uid;
+		$req_data->extra = GatewayProtocols::TYPE_USER_ACCOUNT;
+		$req_data->key   = $this->serv_key;
+		return $this->process->write($req_data->encode());
 	}
 	
 	/**
@@ -245,7 +294,7 @@ class WebSocket extends MessageHandler
 			}
 		} else if ($data['type'] == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息
 			if ($serv->exist($data['fd'])) {
-				$data['data']['data']['content'] =$data['data']['data']['content'];
+				$data['data']['data']['content'] = $data['data']['data']['content'];
 				$this->console->success(date('Y-m-d H:i:s', time()) . '>>>>5管道获取了任务准备发送');
 				
 				if (!is_array($data['data']['data']['content'])) {//不为数组时
@@ -270,89 +319,9 @@ class WebSocket extends MessageHandler
 	 */
 	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
-		$fd   = $frame->fd;
-		$data = $frame->data;
-		//onMessage访问频率限制
-		if (!$this->users->onMessageLimitFreque($this->serv_key, $fd)) {
-			return $this->result($serv, $fd, '您的发送频率太快了，休息一下吧', 'text', 'error', 'sys');
-		}
-		$info = $this->table->get($fd);//每个fd在table必须有记录，没有的话不执行后面
-		if (!$info || !isset($info['ukey'])) {
-			return $this->result($serv, $fd, '非法客户端', 'text', 'error', 'sys');
-		}
-		$ukey     = $info['ukey'];
-		$userinfo = $this->users->init($ukey);//查询一次用户信息
-		if ($data == 'ping') {
-			if ($userinfo === false) {
-				$this->users->removeUser($fd);
-			} else if ($userinfo->user_type == 'account') {
-				$this->redis->set($this->auth->getAccountKey($userinfo->account_id), time());//把商户最后一次心跳时间保存起来，用来判断他是否在线
-			}
-			return $serv->push($fd, 'pong');
-		} else {
-			try {
-				$data = json_decode($data, true);
-				switch ($data['type']) {
-					case 'say':
-						$data['data']['content'] = htmlspecialchars($data['data']['content']);
-						if (!$data['data']['content']) {
-							return $this->result($serv, $fd, '不能发送空信息', 'text', 'error', 'sys');
-						}
-						if ($userinfo === false) {
-							return $this->result($serv, $fd, '请先登录', 'text', 'no_login', 'sys');
-						}
-						return $this->sendToRoomAll($serv, $data['data']['content'], $data['data']['type'], $userinfo);
-						
-						break;
-					case 'login':
-						if (!$this->serv_key) {
-							return $this->result($serv, $fd, '请稍等，服务未就绪...', 'text', 'error', 'sys');
-						}
-						//登录进房间
-						$token     = $data['token'];
-						$room      = $data['data']['room'];
-						$user_type = $data['data']['type'];
-						if (!$room) {
-							return $this->result($serv, $fd, '参数错误', 'text', 'error', 'sys');
-						}
-						if (!$ukey) {
-							//table满了，无法接收新连接
-							return $this->result($serv, $fd, '服务器超过最大连接数', 'text', 'error', 'sys');
-						}
-						//验证token
-						if ($this->auth->validateToken($token, $user_type, $data['data']['authtype'], $room)) {
-							$build             = $this->users;
-							$build->room       = $room;
-							$build->fd         = $fd;
-							$build->user_type  = $user_type;
-							$build->server_key = $this->serv_key;
-							$build->login_time = time();
-							$build->ukey       = $ukey;
-							$result            = $build->build();
-							if ($result === false) {
-								return $this->result($serv, $fd, '登陆失败', 'text', 'error', 'sys');
-							} else {
-								return $this->result($serv, $fd, '登陆成功', 'text', 'login_success', 'sys');
-							}
-						} else {
-							return $this->result($serv, $fd, '验证失败', 'text', 'token_invalid', 'sys');
-						}
-						
-						break;
-					case 'report_detail':
-						break;
-					
-					case 'msg_list':
-						break;
-					default:
-						$serv->push($fd, 'pong');
-						break;
-				}
-			} catch (\Exception $e) {
-				$this->console->error('发生异常' . $e->getMessage());
-				return $this->result($serv, $fd, '消息格式不正确', 'text', 'error', 'sys');
-			}
-		}
+		//		var_dump($serv->getSocket());
+		//		var_dump($serv->getClientInfo($frame->fd));
+		//		var_dump($frame);
 	}
 	
 	/**
@@ -363,7 +332,6 @@ class WebSocket extends MessageHandler
 	public function onClose(swoole_server $serv, $fd)
 	{
 		$this->console->error('close' . $fd);
-		$this->users->removeUser($fd);
 	}
 	
 	/**
@@ -426,74 +394,6 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
-	 * 发送给房间所有人
-	 * @param swoole_server $serv
-	 * @param               $content
-	 * @param               $type
-	 * @param Users         $sender
-	 * @return void
-	 * @throws \Exception
-	 */
-	protected function sendToRoomAll(swoole_server $serv, $content, $type, Users $sender)
-	{
-		$send_usertype   = $sender->user_type;
-		$send_room       = $sender->room;
-		$send_fd         = $sender->fd;
-		$send_account_id = $sender->account_id;
-		$safe_tips       = $this->safeTips($content, $send_usertype);
-		$civi_tips       = $this->civilizationTips($content, $send_usertype);
-		$all_key         = $this->redis->sMembers($this->auth->getRoomKey($send_room));//房间里的所有ukey查出来
-		if (!$all_key) {//找不到房间,并发大会导致这里找不到房间
-			return false;
-		}
-		foreach ($all_key as $ukey) {
-			$u = $this->users->init($ukey);
-			if ($u === false) {
-				$this->users->destoryRedis($ukey, $send_room);
-				continue;
-			}
-			if ($this->serv_key === $u->server_key) {//本服务器
-				if ($serv->exist($u->fd)) {//在线
-					if ($u->fd != $send_fd) {//不发给自己
-						$this->result($serv, $u->fd, $content, $type, 'success', $send_usertype);
-					}
-					if ($u->user_type == 'user') {
-						foreach ($safe_tips as $k => $v) {//给用户发送安全提示
-							$this->result($serv, $u->fd, $v, 'text', 'success', 'sys');
-						}
-					}
-					foreach ($civi_tips as $k => $v) {//给用户发送文明用语提示
-						$this->result($serv, $u->fd, $v, 'text', 'success', 'sys');
-					}
-				} else {//不在线，删除这个链接
-					$this->users->removeUser($u->fd);
-					continue;
-				}
-			} else {//非本服务器-》推送给网关
-				$data           = [
-					'msg'  => 'success',
-					'from' => $send_usertype,
-					'time' => time(),
-					'data' => [
-						'content' => $content,
-						'type'    => $type,
-					]
-				];
-				$request        = new GatewayProtocols();
-				$request->cmd   = GatewayProtocols::CMD_GATEWAY_PUSH;
-				$request->data  = $data;//需要发送的消息内容
-				$request->fd    = $u->fd;//接受消息的fd
-				$request->key   = $u->ukey;//ukey也传过去
-				$request->extra = $u->server_key;//服务key
-				$this->process->write($request->encode());
-				$this->console->info(date('Y-m-d H:i:s', time()) . '>>>>1消息写入子进程管道');
-			}
-		}
-		return $this->writeMysql($send_usertype, $send_room, $content, $type, $send_account_id);//聊天记录落盘
-		
-	}
-	
-	/**
 	 * 此连接$fd的发送队列已触顶即将塞满，这时不应当再向此$fd发送数据
 	 * @param swoole_websocket_server $serv
 	 * @param                         $fd
@@ -522,59 +422,6 @@ class WebSocket extends MessageHandler
 	protected function removeRoom($room, $ukey)
 	{
 		return $this->redis->sRem($this->auth->getRoomKey($room), $ukey);
-	}
-	
-	/**
-	 * 聊天记录落盘
-	 * @param $from
-	 * @param $order_num
-	 * @param $content
-	 * @param $type
-	 * @param $account_id
-	 * @return int|string
-	 * @throws \think\db\exception\DataNotFoundException
-	 * @throws \think\db\exception\DbException
-	 * @throws \think\db\exception\ModelNotFoundException
-	 */
-	private function writeMysql($from, $order_num, $content, $type, $account_id)
-	{
-		$utype = 1;
-		switch ($from) {
-			case 'user':
-				$utype = 1;
-				if ($account_id) {//需要判断商户是否在线
-					$last_ping = $this->redis->get($this->auth->getAccountKey($account_id));
-					if (time() - $last_ping > 15) {//最后一次心跳距离现在超过15秒
-						$jpush = new JiGuangPush();
-						$jpush->pushReportMsg($account_id, $content, $order_num);
-					}
-				}
-				break;
-			case 'account':
-				$utype = 2;
-				break;
-			case 'admin':
-				$utype = 3;
-				if ($account_id) {//需要判断商户是否在线
-					$last_ping = $this->redis->get($this->auth->getAccountKey($account_id));
-					if (time() - $last_ping > 15) {//最后一次心跳距离现在超过15秒
-						$jpush = new JiGuangPush();
-						$jpush->pushReportMsg($account_id, $content, $order_num);
-					}
-				}
-				break;
-			case 'sys':
-				$utype = 4;
-				break;
-		}
-		return Db::name('report_msg')->insert(
-			[
-				'order_num'    => $order_num,
-				'type'         => $utype,
-				'content'      => $content,
-				'created_at'   => time(),
-				'content_type' => $type
-			]);
 	}
 	
 	/**

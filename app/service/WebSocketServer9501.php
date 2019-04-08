@@ -46,7 +46,7 @@ class WebSocketServer9501 extends Server
 	 * @var array
 	 */
 	protected $option
-		                      = [
+		                       = [
 			'worker_num'               => 4,    //worker process num
 			'backlog'                  => 128,   //listen backlog
 			'daemonize'                => 0,
@@ -81,9 +81,9 @@ class WebSocketServer9501 extends Server
 		
 		];
 	
-	public    $messageHandler = WebSocket::class;//消息处理器
+	public    $messageHandler  = WebSocket::class;//消息处理器
 	
-	public    $processHandler = GatewayConnector::class;//子进程的消息处理
+	public    $processHandler  = GatewayConnector::class;//子进程的消息处理
 	
 	protected $console;
 	
@@ -115,7 +115,12 @@ class WebSocketServer9501 extends Server
 		$process->name('Gateway');
 		$process->start();//启动子进程
 		// 设置回调
-		$obj = Container::get($this->messageHandler, ['process' => $process, 'auth' => Container::get(Auth::class)]);//官方代码直接调用方法，没有上下文，必须使用容器先创建对象
+		$obj = Container::get($this->messageHandler,
+		                      [
+			                      'process' => $process,
+			                      'auth'    => Container::get(Auth::class),
+		                      ]
+		);//官方代码直接调用方法，没有上下文，必须使用容器先创建对象
 		foreach ($this->event as $event) {
 			if (method_exists($obj, 'on' . $event)) {
 				$this->swoole->on($event, [$obj, 'on' . $event]);

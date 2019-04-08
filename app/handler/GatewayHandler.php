@@ -32,6 +32,8 @@ class GatewayHandler extends MessageHandler
 	
 	protected $table;
 	
+	protected $user_table;
+	
 	protected $console;
 	
 	/**
@@ -41,10 +43,11 @@ class GatewayHandler extends MessageHandler
 	public function __construct(Auth $auth)
 	{
 		RedisConnectPool::getInstance()->init();
-		$this->auth    = $auth;
-		$this->redis   = new Redis();
-		$this->table   = $this->createTable();
-		$this->console = new Console();
+		$this->auth       = $auth;
+		$this->redis      = new Redis();
+		$this->table      = $this->createTable();
+		$this->user_table = $this->createUserTable();
+		$this->console    = new Console();
 	}
 	
 	public function onWorkerStart(swoole_server $serv, $worker_id)
@@ -78,6 +81,20 @@ class GatewayHandler extends MessageHandler
 					$response->cmd = GatewayProtocols::CMD_REGISTER;
 					$response->key = $key;
 					$serv->send($fd, $response->encode());
+					break;
+				case GatewayProtocols::CMD_REGISTER_USER://注册用户
+					$user_fd  = $data->fd;//获取fd
+					$uid      = $data->data;//获取uid
+					$type     = $data->extra;//用户类型
+					$serv_key = $data->key;//获取servkey
+					
+					$user_info = [
+						'server_type' => $serv_key,//服务类型
+						'fd'          => $user_fd,//fd
+						'uid'         => $uid,//uid
+						'type'        => $type,//type
+					];
+					$this->user_table->set($uid, $user_info);
 					break;
 				case GatewayProtocols::CMD_GATEWAY_PUSH://网关消息转发任务
 					$this->console->info(date('Y-m-d H:i:s', time()) . '>>>>3.1网关获取了消息');
@@ -187,6 +204,21 @@ class GatewayHandler extends MessageHandler
 		$table = new Table(1024);
 		$table->column('fd', Table::TYPE_INT, 4);
 		$table->column('server_type', Table::TYPE_STRING, 10);
+		$table->create();
+		return $table;
+	}
+	
+	/**
+	 * 用户信息table
+	 * @return Table
+	 */
+	private function createUserTable()
+	{
+		$table = new Table(40960);
+		$table->column('fd', Table::TYPE_INT, 6);//链接fd
+		$table->column('uid', Table::TYPE_INT, 20);//用户uid
+		$table->column('serv_key', Table::TYPE_STRING, 32);//所属服务器的key
+		$table->column('type', Table::TYPE_INT, 1);//用户类型
 		$table->create();
 		return $table;
 	}

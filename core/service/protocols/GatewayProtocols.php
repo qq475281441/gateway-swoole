@@ -18,12 +18,15 @@ class GatewayProtocols
 	const CMD_PING                     = 1;//心跳命令
 	const CMD_ON_MESSAGE               = 2;//通知服务有消息
 	const CMD_REGISTER                 = 3;//通知服务注册信息
+	const CMD_REGISTER_USER            = 8;//通知服务注册用户信息
 	const CMD_ON_MANAGE_CLIENT_MESSAGE = 4;//通知网关有管理客户端信息
 	const CMD_PROCESS_DISCONNECT       = 5;//子进程与网关断开了连接
 	const CMD_ON_CONNECT_GATEWAY       = 6;//连接上了网关事件
 	const CMD_GATEWAY_PUSH             = 7;//网关消息转发
 	const TYPE_SOCKET                  = 1;//服务类型为socket
 	const TYPE_WEB_SOCKET              = 2;//服务类型为websocket
+	const TYPE_USER_ACCOUNT            = 1;//商家
+	const TYPE_USER_U                  = 2;//买家
 	
 	public $cmd;//命令
 	
