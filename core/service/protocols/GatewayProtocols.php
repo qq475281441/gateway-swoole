@@ -23,22 +23,35 @@ class GatewayProtocols
 	const CMD_PROCESS_DISCONNECT       = 5;//子进程与网关断开了连接
 	const CMD_ON_CONNECT_GATEWAY       = 6;//连接上了网关事件
 	const CMD_GATEWAY_PUSH             = 7;//网关消息转发
+	const CMD_SEND_TO_UID              = 9;//发送给uid
 	const TYPE_SOCKET                  = 1;//服务类型为socket
 	const TYPE_WEB_SOCKET              = 2;//服务类型为websocket
-	const TYPE_USER_ACCOUNT            = 1;//商家
-	const TYPE_USER_U                  = 2;//买家
+	const TYPE_USER_ACCOUNT            = 'A';//商家
+	const TYPE_USER_U                  = 'U';//买家
 	
-	public $cmd;//命令
+	public        $cmd;//命令
 	
-	public $key;//服务key
+	public        $key;//服务key
 	
-	public $fd;//服务的fd
+	public        $fd;//服务的fd
 	
-	public $master_pid;//master pid
+	public        $master_pid;//master pid
 	
-	public $data;//数据
+	public        $data;//数据
 	
-	public $extra;//扩展
+	public        $extra;//扩展
+	
+	/**
+	 * 协议配置项
+	 * @var array
+	 */
+	public static $length_check_config = [
+		'open_length_check'     => true,      // 开启协议解析
+		'package_length_type'   => 'N',     // 长度字段的类型
+		'package_length_offset' => 0,       //第几个字节是包长度的值
+		'package_body_offset'   => 4,       //第几个字节开始计算长度
+		'package_max_length'    => 81920,  //协议最大长度
+	];
 	
 	/**
 	 * 将要发的数据编码

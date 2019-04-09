@@ -20,7 +20,7 @@ use swoole_server;
 
 class GatewayHandler extends MessageHandler
 {
-	protected $count = 0;
+	protected $count           = 0;
 	
 	protected $servs;
 	
@@ -35,6 +35,8 @@ class GatewayHandler extends MessageHandler
 	protected $user_table;
 	
 	protected $console;
+	
+	protected $_uidConnections = [];
 	
 	/**
 	 * GatewayHandler constructor.
@@ -64,10 +66,11 @@ class GatewayHandler extends MessageHandler
 	 */
 	public function onReceive(swoole_server $serv, $fd, $from_id, $data)
 	{
-		$this->user_log('网关收到消息', $data);
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_PING) {//ping
-			$serv->send($fd, 'pong');
+			$response      = new GatewayProtocols();
+			$response->cmd = GatewayProtocols::CMD_PING;
+			$serv->send($fd, $response->encode());
 		} else {
 			switch ($data->cmd) {
 				case GatewayProtocols::CMD_REGISTER://注册服务
@@ -85,16 +88,43 @@ class GatewayHandler extends MessageHandler
 				case GatewayProtocols::CMD_REGISTER_USER://注册用户
 					$user_fd  = $data->fd;//获取fd
 					$uid      = $data->data;//获取uid
-					$type     = $data->extra;//用户类型
 					$serv_key = $data->key;//获取servkey
 					
-					$user_info = [
-						'server_type' => $serv_key,//服务类型
-						'fd'          => $user_fd,//fd
-						'uid'         => $uid,//uid
-						'type'        => $type,//type
-					];
-					$this->user_table->set($uid, $user_info);
+					$user_info = $this->user_table->get($uid);
+					if ($user_info && $user_info <> '') {
+						$user_info = json_decode($user_info['data'], true);
+						//检测一波用户是否在线
+						$user_info[] = ['fd' => $user_fd, 'serv_key' => $serv_key];
+						$this->user_table->set($uid, ['data' => json_encode($user_info)]);
+					} else {
+						$this->user_table->set($uid, ['data' => json_encode([['fd' => $user_fd, 'serv_key' => $serv_key]])]);
+					}
+					break;
+				case  GatewayProtocols::CMD_SEND_TO_UID://往uid发消息
+					$from_uid = $data->key;
+					$to_uid   = $data->extra;
+					$content  = $data->data;
+					$fds      = $this->user_table->get($to_uid);
+					if ($fds && $fds <> '' && isset($fds['data'])) {
+						$fds = json_decode($fds['data'], true);//该用户绑定的fd
+						if (!$fds) {
+							return false;
+						}
+						foreach ($fds as $k => $v) {
+							$fd              = $v['fd'];//需要接受消息的fd
+							$serv_key        = $v['serv_key'];
+							$serv_fd         = $this->table->get($serv_key);//子服务的fd
+							$response        = new GatewayProtocols();
+							$response->cmd   = GatewayProtocols::CMD_GATEWAY_PUSH;
+							$response->data  = $content;
+							$response->fd    = $fd;
+							$response->extra = $from_uid;//消息发送者uid
+							
+							if ($serv->exist($serv_fd['fd'])) {
+								$serv->send($serv_fd['fd'], $response->encode());
+							}
+						}
+					}
 					break;
 				case GatewayProtocols::CMD_GATEWAY_PUSH://网关消息转发任务
 					$this->console->info(date('Y-m-d H:i:s', time()) . '>>>>3.1网关获取了消息');
@@ -215,10 +245,7 @@ class GatewayHandler extends MessageHandler
 	private function createUserTable()
 	{
 		$table = new Table(40960);
-		$table->column('fd', Table::TYPE_INT, 6);//链接fd
-		$table->column('uid', Table::TYPE_INT, 20);//用户uid
-		$table->column('serv_key', Table::TYPE_STRING, 32);//所属服务器的key
-		$table->column('type', Table::TYPE_INT, 1);//用户类型
+		$table->column('data', Table::TYPE_STRING, 1024);//data,json串
 		$table->create();
 		return $table;
 	}

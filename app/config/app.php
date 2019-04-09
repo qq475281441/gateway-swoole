@@ -19,16 +19,16 @@ return [
 		'main' => [
 			'type'            => 'mysql',
 			// 服务器地址
-			'hostname'        => '127.0.0.1',
+			'hostname'        => '120.77.205.154',
 			// 数据库名
-			'database'        => 'test',
+			'database'        => 'app_kuaifaka',
 			// 用户名
 			'username'        => 'root',
 			// 密码
-			'password'        => 'root',
+			'password'        => 'xq92mqckxh3Q**d',
 			// 端口
 			'hostport'        => 3306,
-			'prefix'          => 'im_',
+			'prefix'          => 'kfk_',
 			'charset'         => 'utf8mb4',
 			'break_reconnect' => true,//开启断线重连
 			// 连接dsn

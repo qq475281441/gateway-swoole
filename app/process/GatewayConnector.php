@@ -49,6 +49,7 @@ class GatewayConnector
 	protected function init(swoole_process $process)
 	{
 		$client = new swoole_client(SWOOLE_SOCK_TCP, SWOOLE_SOCK_ASYNC); //异步非阻塞
+		$client->set(GatewayProtocols::$length_check_config);
 		$client->on("connect", function (swoole_client $cli) use ($process) {
 			$this->console->success('连接上网关');
 			$request      = new GatewayProtocols();
@@ -57,7 +58,8 @@ class GatewayConnector
 		});
 		
 		$client->on("receive", function (swoole_client $cli, $data) use ($process) {
-			if ($data <> 'pong') {
+			$obj_data = (new GatewayProtocols())->decode($data);
+			if ($obj_data->cmd <> GatewayProtocols::CMD_PING) {
 				return $process->write($data);
 			}
 		});

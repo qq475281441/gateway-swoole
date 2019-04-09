@@ -25,7 +25,6 @@ class Auth
 	 */
 	public function validateToken($token, $type, $authtype)
 	{
-		
 		$redis = Redis::getInstance();
 		switch ($type) {
 			case 'user':
@@ -33,6 +32,7 @@ class Auth
 				break;
 			case 'account':
 				$redis_cache_key_token = $token . $authtype;
+				
 				if ($redis->exists($redis_cache_key_token)) {
 					//有此集合
 					$data = $redis->zRangeByScore($redis_cache_key_token, time(), '+inf');
@@ -40,6 +40,8 @@ class Auth
 					if (!$data) {
 						//token过期
 						return false;
+					}else{
+						return $data[0];
 					}
 				} else {
 					$account_token = Db::name('account_token')->where('token', $token)

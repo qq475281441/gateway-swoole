@@ -91,8 +91,11 @@ class WebSocket extends MessageHandler
 		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
 			//验证通过,在网关绑定uid
 			$this->bindAccountID($request->fd, $uid);
+			return $this->result($serv, $request->fd, '登陆成功，你的链接id为' . $request->fd, 'text', 'login_success', 'tips');
 		} else {
 			$this->result($serv, $request->fd, 'token无效', 'text', 'token_invalid', 'tips');
+			usleep(100);
+			return $serv->close($request->fd);
 		}
 	}
 	
@@ -104,12 +107,11 @@ class WebSocket extends MessageHandler
 	 */
 	protected function bindAccountID($fd, $uid)
 	{
-		$req_data        = new GatewayProtocols();
-		$req_data->cmd   = GatewayProtocols::CMD_REGISTER_USER;
-		$req_data->fd    = $fd;
-		$req_data->data  = $uid;
-		$req_data->extra = GatewayProtocols::TYPE_USER_ACCOUNT;
-		$req_data->key   = $this->serv_key;
+		$req_data       = new GatewayProtocols();
+		$req_data->cmd  = GatewayProtocols::CMD_REGISTER_USER;
+		$req_data->fd   = $fd;
+		$req_data->data = GatewayProtocols::TYPE_USER_ACCOUNT . $uid;
+		$req_data->key  = $this->serv_key;
 		return $this->process->write($req_data->encode());
 	}
 	
@@ -241,11 +243,12 @@ class WebSocket extends MessageHandler
 							break;
 						case GatewayProtocols::CMD_GATEWAY_PUSH://网关发来的消息推送任务
 							$job = [
-								'type' => GatewayProtocols::CMD_GATEWAY_PUSH,
-								'fd'   => $data->fd,
-								'data' => $data->data,
+								'type'     => GatewayProtocols::CMD_GATEWAY_PUSH,
+								'fd'       => $data->fd,
+								'data'     => $data->data,
+								'from_uid' => $data->extra,
 							];
-							$this->console->info(date('Y-m-d H:i:s', time()) . '>>>>4服务worker_id' . $serv->worker_id . '收到网关的消息推送任务准备写入管道');
+							$this->console->error(date('Y-m-d H:i:s', time()) . '>>>>4服务worker_id' . $serv->worker_id . '收到网关的消息推送任务准备写入管道');
 							$serv->sendMessage(json_encode($job), mt_rand(1, 3));
 							break;
 						default:
@@ -278,33 +281,13 @@ class WebSocket extends MessageHandler
 	 */
 	public function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
 	{
-		$this->console->info('触发onPipe');
-		$this->console->info($src_worker_id);
 		$data = json_decode($data, true);
-		if ($data['type'] == GatewayProtocols::CMD_ON_MESSAGE) {//发网关批量消息任务-给房间发消息
-			
-			$this->console->error('>>>>>>>>>>>>>>>>>>>>>>>>发网关批量消息任务-给房间发消息');
-			foreach ($data['fd'] as $v) {
-				if ($serv->exist($v)) {
-					$data['data']['data']['content'] = $data['data']['data']['content'];
-					$serv->push($v, json_encode($data['data']));//向这些fd发消息
-				} else {
-					return $this->users->removeUser($data['fd']);
-				}
-			}
-		} else if ($data['type'] == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息
-			if ($serv->exist($data['fd'])) {
-				$data['data']['data']['content'] = $data['data']['data']['content'];
-				$this->console->success(date('Y-m-d H:i:s', time()) . '>>>>5管道获取了任务准备发送');
-				
-				if (!is_array($data['data']['data']['content'])) {//不为数组时
-					foreach ($this->safeTips($data['data']['data']['content']) as $k => $v) {//给用户发送安全提示
-						$this->result($serv, $data['fd'], $v, 'text', 'success', 'sys');
-					}
-				}
-				return $serv->push($data['fd'], json_encode($data['data']));//向fd发消息
-			} else {
-				return $this->users->removeUser($data['fd']);
+		if ($data['type'] == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息
+			$fd = $data['fd'];
+			if ($serv->exist($fd)) {
+				$content = json_decode($data['data'], true);
+				$fd      = $data['fd'];
+				return $serv->push($fd, json_encode($content));//向fd发消息
 			}
 		} else {
 			$this->console->error(date('Y-m-d H:i:s', time()) . '>>>>5.2无效消息');
@@ -319,9 +302,12 @@ class WebSocket extends MessageHandler
 	 */
 	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
-		//		var_dump($serv->getSocket());
-		//		var_dump($serv->getClientInfo($frame->fd));
-		//		var_dump($frame);
+		$fd   = $frame->fd;
+		$data = $frame->data;
+		if ($data == 'ping') {
+			return $serv->push($fd, 'pong');
+		}
+		$this->sendToUID('A16', 'A16', ['content' => $fd]);
 	}
 	
 	/**
@@ -394,37 +380,6 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
-	 * 此连接$fd的发送队列已触顶即将塞满，这时不应当再向此$fd发送数据
-	 * @param swoole_websocket_server $serv
-	 * @param                         $fd
-	 */
-	public function onBufferFull(swoole_websocket_server $serv, $fd)
-	{
-		echo $this->console->error("连接$fd 缓冲区即将满》》》》》》》》》》》》");
-	}
-	
-	/**
-	 * 表明当前的$fd发送队列中的数据已被发出，可以继续向此连接发送数据了
-	 * @param swoole_websocket_server $serv
-	 * @param                         $fd
-	 */
-	public function onBufferEmpty(swoole_websocket_server $serv, $fd)
-	{
-		echo $this->console->success("连接$fd 缓冲区已空，可以继续发消息》》》》》》》》》》》》");
-	}
-	
-	/**
-	 * fd从房间移除
-	 * @param $room
-	 * @param $ukey
-	 * @return bool
-	 */
-	protected function removeRoom($room, $ukey)
-	{
-		return $this->redis->sRem($this->auth->getRoomKey($room), $ukey);
-	}
-	
-	/**
 	 * 发送返回消息
 	 * @param swoole_server $serv 服务
 	 * @param               $fd         接受者fd
@@ -474,5 +429,41 @@ class WebSocket extends MessageHandler
 		$request->key   = $this->serv_key;
 		$request->extra = GatewayProtocols::TYPE_WEB_SOCKET;
 		return $this->process->write($request->encode());
+	}
+	
+	/**
+	 * 此连接$fd的发送队列已触顶即将塞满，这时不应当再向此$fd发送数据
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 */
+	public function onBufferFull(swoole_websocket_server $serv, $fd)
+	{
+		echo $this->console->error("连接$fd 缓冲区即将满》》》》》》》》》》》》");
+	}
+	
+	/**
+	 * 表明当前的$fd发送队列中的数据已被发出，可以继续向此连接发送数据了
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 */
+	public function onBufferEmpty(swoole_websocket_server $serv, $fd)
+	{
+		echo $this->console->success("连接$fd 缓冲区已空，可以继续发消息》》》》》》》》》》》》");
+	}
+	
+	/**
+	 * 给用户发消息
+	 * @param $from_uid
+	 * @param $to_uid
+	 * @param $content
+	 */
+	protected function sendToUID($from_uid, $to_uid, $content)
+	{
+		$request        = new GatewayProtocols();
+		$request->cmd   = GatewayProtocols::CMD_SEND_TO_UID;
+		$request->key   = $from_uid;
+		$request->extra = $to_uid;
+		$request->data  = json_encode($content);
+		$this->process->write($request->encode());
 	}
 }
