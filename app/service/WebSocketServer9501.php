@@ -58,7 +58,7 @@ class WebSocketServer9501 extends Server
 			'open_cpu_affinity'        => true,//cpu亲和性
 			'tcp_fastopen'             => true,
 			'enable_delay_receive'     => true,//延时收包
-			'dispatch_mode'            => 2,
+			'dispatch_mode'            => 5,
 			/**
 			 * 1，轮循模式，收到会轮循分配给每一个Worker进程
 			 * 2，固定模式，根据连接的文件描述符分配Worker。这样可以保证同一个连接发来的数据只会被同一个Worker处理

@@ -12,7 +12,7 @@ use im\core\connect\RedisConnectPool;
 use im\core\Container;
 
 /**
- *
+ * @var \Redis
  *一个简单的redis连接池
  * Class Redis
  * @package im\core\redis

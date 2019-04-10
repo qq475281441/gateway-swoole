@@ -11,6 +11,7 @@ namespace app\handler;
 use app\auth\Auth;
 use app\common\JiGuangPush;
 use app\model\Users;
+use Co;
 use im\core\connect\MysqlConnectPool;
 use im\core\connect\RedisConnectPool;
 use im\core\Container;
@@ -89,11 +90,11 @@ class WebSocket extends MessageHandler
 		
 		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
 			//验证通过,在网关绑定uid
-			$this->bindAccountID($request->fd, $uid);
-			return $this->result($serv, $request->fd, '登陆成功，你的链接id为' . $request->fd, 'text', 'login_success', 'tips');
+			$this->bindID($serv, $request->fd, $uid, $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT);
+			return $this->result($serv, $request->fd, $uid, 'text', 'login_success', 'tips');
 		} else {
 			$this->result($serv, $request->fd, 'token无效', 'text', 'token_invalid', 'tips');
-			usleep(100);
+			co::sleep(100);
 			return $serv->close($request->fd);
 		}
 	}
@@ -104,14 +105,52 @@ class WebSocket extends MessageHandler
 	 * @param $uid
 	 * @return int
 	 */
-	protected function bindAccountID($fd, $uid)
+	protected function bindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT)
 	{
 		$req_data       = new GatewayProtocols();
 		$req_data->cmd  = GatewayProtocols::CMD_REGISTER_USER;
 		$req_data->fd   = $fd;
-		$req_data->data = GatewayProtocols::TYPE_USER_ACCOUNT . $uid;
+		$req_data->data = $user_type . $uid;
 		$req_data->key  = $this->serv_key;
+		$this->localBindUID($serv, $fd, $uid, $user_type);
 		return $this->process->write($req_data->encode());
+	}
+	
+	/**
+	 * 本地将fd与uid绑定
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 * @param                         $uid
+	 * @return bool
+	 */
+	protected function localBindUID(swoole_websocket_server $serv, $fd, $id, $type)
+	{
+		if ($type === GatewayProtocols::TYPE_USER_ACCOUNT) {
+			$uid = (int)('1' . $id);
+		} else {
+			$uid = (int)('2' . $id);
+		}
+		return $serv->bind($fd, $uid);//当前绑定一个uid
+	}
+	
+	/**
+	 * 获取绑定的UID
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 * @return string
+	 */
+	protected function getLocalBindUID(swoole_websocket_server $serv, $fd)
+	{
+		$clientInfo = $serv->getClientInfo($fd);
+		$uid        = $clientInfo['uid'];
+		$type       = substr($uid, 0, 1);
+		if ($type == 1) {
+			//account
+			return 'A' . substr($uid, 1, strlen($uid) - 1);
+		} else {
+			//user
+			return 'U' . substr($uid, 1, strlen($uid) - 1);
+		}
 	}
 	
 	/**
@@ -303,11 +342,22 @@ class WebSocket extends MessageHandler
 	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
 		$fd   = $frame->fd;
-		$data = $frame->data;
-		if ($data == 'ping') {
+		$data = json_decode($frame->data, true);
+		$uid  = $this->getLocalBindUID($serv, $fd);
+		if ($frame->data == 'ping') {
 			return $serv->push($fd, 'pong');
+		} else {
+			switch ($data['cmd']) {
+				case 'send'://{"cmd":"send","to_uid":"A16","data":{"content_type":"text","content":"666"}}
+					$content = $data['data'];
+					$to_uid  = $data['to_uid'];
+					if (!in_array(substr($to_uid, 0, 1), ['A', 'U'])) {
+						return $this->result($serv,$fd,'接受者消息格式不正确','text','error','tips');
+					}
+					$this->sendToUID($uid, $to_uid, $content);
+					break;
+			}
 		}
-		$this->sendToUID('A16', 'A16', ['content' => $fd]);
 	}
 	
 	/**

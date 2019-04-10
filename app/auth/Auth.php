@@ -8,11 +8,21 @@
 
 namespace app\auth;
 
-use im\core\cache\Redis;
+use im\core\redis\Redis;
 use think\Db;
 
 class Auth
 {
+	/**
+	 * @var \Redis
+	 */
+	protected $redis;
+	
+	public function __construct()
+	{
+		$this->redis = new Redis();
+	}
+	
 	/**
 	 * 检测im登录token
 	 * @param $token
@@ -25,22 +35,26 @@ class Auth
 	 */
 	public function validateToken($token, $type, $authtype)
 	{
-		$redis = Redis::getInstance();
 		switch ($type) {
 			case 'user':
-				return 1;
+				$user = Db::name('user')->where('token', $token)->field('user_id')->find();
+				if ($user) {
+					return $user['user_id'];
+				} else {
+					return false;
+				}
 				break;
 			case 'account':
 				$redis_cache_key_token = $token . $authtype;
 				
-				if ($redis->exists($redis_cache_key_token)) {
+				if ($this->redis->exists($redis_cache_key_token)) {
 					//有此集合
-					$data = $redis->zRangeByScore($redis_cache_key_token, time(), '+inf');
-					$redis->zRemRangeByScore($redis_cache_key_token, 0, time());
+					$data = $this->redis->zRangeByScore($redis_cache_key_token, time(), '+inf');
+					$this->redis->zRemRangeByScore($redis_cache_key_token, 0, time());
 					if (!$data) {
 						//token过期
 						return false;
-					}else{
+					} else {
 						return $data[0];
 					}
 				} else {
@@ -52,7 +66,7 @@ class Auth
 						if ($account_token['expire_time'] < time()) {
 							return false;//token已过期，请重新登录
 						}
-						$redis->zAdd($redis_cache_key_token, $account_token['expire_time'], $account_token['account_id']);//加入set
+						$this->redis->zAdd($redis_cache_key_token, $account_token['expire_time'], $account_token['account_id']);//加入set
 						return $account_token['account_id'];
 					} else {
 						return false;//token无效，请重新登录
@@ -64,7 +78,6 @@ class Auth
 		}
 		return false;
 	}
-	
 	
 	/**
 	 * 用户ukey生成算法
