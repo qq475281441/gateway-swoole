@@ -44,7 +44,6 @@ class GatewayHandler extends MessageHandler
 	 */
 	public function __construct(Auth $auth)
 	{
-		RedisConnectPool::getInstance()->init();
 		$this->auth       = $auth;
 		$this->redis      = new Redis();
 		$this->table      = $this->createTable();
@@ -54,6 +53,7 @@ class GatewayHandler extends MessageHandler
 	
 	public function onWorkerStart(swoole_server $serv, $worker_id)
 	{
+		RedisConnectPool::getInstance()->init();
 	}
 	
 	/**

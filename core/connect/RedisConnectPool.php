@@ -13,7 +13,7 @@ use im\core\Container;
 
 class RedisConnectPool
 {
-	protected     $num         = 50;
+	protected     $num         = 5;
 	
 	protected     $redisConfig = [];
 	
@@ -27,7 +27,7 @@ class RedisConnectPool
 	{
 		$this->config      = Container::get('config');
 		$this->redisConfig = $this->config->get('redis');
-		$this->chan        = new \Chan(1024);
+		$this->chan        = new \Chan($this->num);
 		
 		self::$instance = $this;
 	}
@@ -40,16 +40,31 @@ class RedisConnectPool
 		for ($i = 0; $i < $this->num; $i++) {
 			$this->chan->push($this->preRedis());
 		}
+		swoole_timer_tick(1000, function () {//定时检查这个池里面的连接是否有效
+			$redis = $this->getConnect();
+			try {
+				$pong = $redis->ping();
+				if ($pong === '+PONG') {
+					$this->release($redis);
+				} else {
+					$redis->close();
+					$this->chan->push($this->preRedis());
+				}
+			} catch (\Exception $e) {
+				$redis->close();
+				$this->chan->push($this->preRedis());
+			}
+		});
 	}
 	
 	/**
 	 * 获取一个redis
-	 * @return mixed
+	 * @return \Redis
 	 * @throws \Exception
 	 */
 	public function getConnect()
 	{
-		return $this->chan->pop(1);
+		return $this->chan->pop(100);//毫秒
 	}
 	
 	/**
@@ -68,7 +83,6 @@ class RedisConnectPool
 	 */
 	private function preRedis()
 	{
-		echo '准备一个redis>>>>>>>>>>>>>>>>>>>>>>>'."\n";
 		$redis = new \Redis();
 		if ($redis->connect($this->redisConfig['host'], $this->redisConfig['port'], $this->redisConfig['timeout'])) {
 			return $redis;

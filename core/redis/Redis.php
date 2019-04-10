@@ -21,10 +21,15 @@ class Redis
 {
 	public function __call($name, $arguments)
 	{
-		$pool   = RedisConnectPool::getInstance();
-		$redis  = $pool->getConnect();//获取
-		$result = call_user_func_array([$redis, $name], $arguments);//调用
-		$pool->release($redis);//释放
-		return $result;
+		$chan = new \Chan(1);
+		go(function () use ($name, $arguments, $chan) {
+			$pool   = RedisConnectPool::getInstance();
+			$redis  = $pool->getConnect();//获取
+			$result = call_user_func_array([$redis, $name], $arguments);//调用
+			$pool->release($redis);//释放
+			$chan->push($result);
+		});
+		
+		return $chan->pop(100);
 	}
 }

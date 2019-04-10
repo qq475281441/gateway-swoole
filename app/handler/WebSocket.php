@@ -64,7 +64,6 @@ class WebSocket extends MessageHandler
 		$this->table    = $this->createTable();
 		$this->users    = new Users($this->redis, $this->table);
 		$this->serv_key = $this->auth->getServerKey();//创建key，才可以在所有worker中共享
-		RedisConnectPool::getInstance()->init();
 	}
 	
 	/**
@@ -204,6 +203,7 @@ class WebSocket extends MessageHandler
 	 */
 	public function onWorkerStart(\swoole_server $serv, $worker_id)
 	{
+		RedisConnectPool::getInstance()->init();
 		if ($serv->taskworker === true) {// 表示当前的进程是Task工作进程
 		
 		} else {//表示当前的进程是Worker进程
