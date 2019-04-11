@@ -29,17 +29,21 @@ class GatewayProtocols
 	const TYPE_USER_ACCOUNT            = 'A';//商家
 	const TYPE_USER_U                  = 'U';//买家
 	
-	public        $cmd;//命令
+	public $cmd;//命令
 	
-	public        $key;//服务key
+	public $key;//服务key
 	
-	public        $fd;//服务的fd
+	public $fd;//服务的fd
 	
-	public        $master_pid;//master pid
+	public $master_pid;//master pid
 	
-	public        $data;//数据
+	public $data;//数据
 	
-	public        $extra;//扩展
+	public $extra;//扩展
+	
+	public $from_uid;
+	
+	public $to_uid;
 	
 	/**
 	 * 协议配置项
@@ -64,6 +68,8 @@ class GatewayProtocols
 			'key'        => $this->key,
 			'fd'         => $this->fd,
 			'master_pid' => $this->master_pid,
+			'from_uid'   => $this->from_uid,
+			'to_uid'     => $this->to_uid,
 			'data'       => $this->data,
 			'extra'      => $this->extra,
 		];
@@ -86,6 +92,8 @@ class GatewayProtocols
 		$this->cmd        = $data['cmd'];
 		$this->key        = isset($data['key']) ? $data['key'] : '';
 		$this->fd         = isset($data['fd']) ? $data['fd'] : '';
+		$this->from_uid   = isset($data['from_uid']) ? $data['from_uid'] : '';
+		$this->to_uid     = isset($data['to_uid']) ? $data['to_uid'] : '';
 		$this->master_pid = isset($data['master_pid']) ? $data['master_pid'] : '';
 		$this->data       = isset($data['data']) ? $data['data'] : '';
 		$this->extra      = isset($data['extra']) ? $data['extra'] : '';

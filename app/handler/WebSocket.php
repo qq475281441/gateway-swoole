@@ -11,6 +11,8 @@ namespace app\handler;
 use app\auth\Auth;
 use app\common\JiGuangPush;
 use app\model\Users;
+use app\protocols\MessageSendProtocols;
+use app\service\Gateway;
 use Co;
 use im\core\connect\MysqlConnectPool;
 use im\core\connect\RedisConnectPool;
@@ -28,6 +30,7 @@ use swoole_process;
 use swoole_server;
 use swoole_websocket_server;
 use think\Db;
+use think\db\Where;
 
 class WebSocket extends MessageHandler
 {
@@ -81,11 +84,11 @@ class WebSocket extends MessageHandler
 		$_GET = $request->get;
 		if (!isset($_GET['token']) || !isset($_GET['type'])) {
 			$this->result($serv, $request->fd, '缺少token或type', 'text', 'token_invalid', 'tips');
-			return $serv->close($request->fd);
+			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
 		if ($_GET['type'] == 'account' && !isset($_GET['authtype'])) {
 			$this->result($serv, $request->fd, '缺少authtype', 'text', 'token_invalid', 'tips');
-			return $serv->close($request->fd);
+			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
 		
 		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
@@ -95,7 +98,7 @@ class WebSocket extends MessageHandler
 		} else {
 			$this->result($serv, $request->fd, 'token无效', 'text', 'token_invalid', 'tips');
 			co::sleep(100);
-			return $serv->close($request->fd);
+			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
 	}
 	
@@ -167,7 +170,7 @@ class WebSocket extends MessageHandler
 		$cache       = $this->redis->get(md5('swoole_limit' . $remote_ip));
 		if ($cache && $cache >= 5) {//一个ip一秒钟只能调用5次onconnect
 			if ($cache >= 5) {
-				return $serv->close($fd);
+				return $serv->disconnect($fd, 1002, 'limit');
 			} else {
 				$this->redis->set(md5('swoole_limit' . $remote_ip), ++$cache, 1);//一个ip一秒钟只能调用5次onconnect
 			}
@@ -177,6 +180,7 @@ class WebSocket extends MessageHandler
 		}
 		
 		if (!$this->table->set($fd, ['ukey' => $this->auth->getUkey($fd)])) {
+			$serv->disconnect($fd, 1003, 'sys_error');
 			return $this->console->error('table设置失败，可能内存不足');
 		}
 	}
@@ -188,7 +192,7 @@ class WebSocket extends MessageHandler
 	public function onShutdown(swoole_server $server)
 	{
 		$this->removeUkey();
-		sleep(2);
+		co::sleep(2);
 		$this->process->write('exit');
 	}
 	
@@ -251,55 +255,6 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
-	 * 处理子进程数据
-	 * @param $process
-	 */
-	private function processEvent(swoole_server $serv, $process)
-	{
-		swoole_event_add($process->pipe,
-			function ($pipe) use ($process, $serv) {//获取子进程的管道消息
-				try {
-					$data = (new GatewayProtocols())->decode($process->read());
-					switch ($data->cmd) {
-						case GatewayProtocols::CMD_REGISTER://注册
-							break;
-						case GatewayProtocols::CMD_ON_MESSAGE://需要给指定多个fd发消息
-							$fds = $data->extra;//需要接受消息的fd
-							$job = [
-								'type' => GatewayProtocols::CMD_ON_MESSAGE,
-								'fd'   => $fds,
-								'data' => $data->data,
-							];
-							$serv->sendMessage(json_encode($job), mt_rand(1, 3));
-							break;
-						
-						case GatewayProtocols::CMD_PROCESS_DISCONNECT:
-							$this->console->error('网关断开连接');
-							break;
-						
-						case GatewayProtocols::CMD_ON_CONNECT_GATEWAY://网关连接成功
-							$this->initServKey();//找网关注册
-							break;
-						case GatewayProtocols::CMD_GATEWAY_PUSH://网关发来的消息推送任务
-							$job = [
-								'type'     => GatewayProtocols::CMD_GATEWAY_PUSH,
-								'fd'       => $data->fd,
-								'data'     => $data->data,
-								'from_uid' => $data->extra,
-							];
-							$this->console->error(date('Y-m-d H:i:s', time()) . '>>>>4服务worker_id' . $serv->worker_id . '收到网关的消息推送任务准备写入管道');
-							$serv->sendMessage(json_encode($job), mt_rand(1, 3));
-							break;
-						default:
-							break;
-					}
-				} catch (\Exception $e) {
-					$this->console->error($e->getMessage());
-				}
-			});
-	}
-	
-	/**
 	 *维持子进程的心跳
 	 */
 	private function holdPing()
@@ -320,16 +275,21 @@ class WebSocket extends MessageHandler
 	 */
 	public function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
 	{
-		$data = json_decode($data, true);
-		if ($data['type'] == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息
-			$fd = $data['fd'];
-			if ($serv->exist($fd)) {
-				$content = json_decode($data['data'], true);
-				$fd      = $data['fd'];
-				return $serv->push($fd, json_encode($content));//向fd发消息
+		$data = (new GatewayProtocols())->decode($data);
+		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
+			$fd = $data->fd;
+			if ($serv->isEstablished($fd)) {
+				$messageSend                 = new MessageSendProtocols();
+				$messageSend->cmd            = MessageSendProtocols::CMD_SEND;//发送消息
+				$messageSend->to_user_type   = 1;
+				$messageSend->to_uid         = $data->key;
+				$messageSend->from_uid       = $data->extra;
+				$messageSend->from_user_type = 2;
+				$messageSend->data           = $data->data;
+				return $serv->push($fd, $messageSend->encode());//向fd发消息
 			}
 		} else {
-			$this->console->error(date('Y-m-d H:i:s', time()) . '>>>>5.2无效消息');
+			$this->console->error('无效消息');
 		}
 	}
 	
@@ -352,9 +312,33 @@ class WebSocket extends MessageHandler
 					$content = $data['data'];
 					$to_uid  = $data['to_uid'];
 					if (!in_array(substr($to_uid, 0, 1), ['A', 'U'])) {
-						return $this->result($serv,$fd,'接受者消息格式不正确','text','error','tips');
+						return $this->result($serv, $fd, '接受者消息格式不正确', 'text', 'error', 'tips');
 					}
-					$this->sendToUID($uid, $to_uid, $content);
+					return $this->sendToUID($uid, $to_uid, $content);
+					break;
+				case 'message_list'://{"cmd":"message_list","page":"1","uid":"16"}
+					$page    = $data['page'];
+					$utype   = substr($uid, 0, 1) === GatewayProtocols::TYPE_USER_ACCOUNT ? 2 : 1;//用户类型
+					$user_id = substr($uid, 1, strlen($uid) - 1);
+					
+					$where                   = new Where();//他发的
+					$where['from_uid']       = $user_id;
+					$where['from_user_type'] = $utype;
+					$where['to_uid']         = $data['uid'];
+					$where['to_user_type']   = $utype == 1 ? 2 : 1;
+					
+					$whereOr                   = new Where();//他接收的
+					$whereOr['to_uid']         = $user_id;
+					$whereOr['to_user_type']   = $utype;
+					$whereOr['from_uid']       = $data['uid'];
+					$whereOr['from_user_type'] = $utype == 1 ? 2 : 1;
+					
+					$message = Db::name('user_message')->where($where)->whereOr($whereOr)
+						->field('from_uid,from_user_type,to_uid,to_user_type,content,content_type')
+						->order('create_time desc')
+						->paginate(20, false, ['page' => $page]);
+					
+					return $this->result($serv, $fd, $message->toArray(), '', 'message_list', 'api');
 					break;
 			}
 		}
@@ -453,7 +437,9 @@ class WebSocket extends MessageHandler
 			],
 		];
 		
-		return $serv->push($fd, json_encode($data));
+		if ($serv->isEstablished($fd)) {
+			return $serv->push($fd, json_encode($data));
+		}
 	}
 	
 	/**
@@ -502,6 +488,38 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
+	 * 处理子进程数据
+	 * @param $process
+	 */
+	private function processEvent(swoole_server $serv, $process)
+	{
+		swoole_event_add($process->pipe,
+			function ($pipe) use ($process, $serv) {//获取子进程的管道消息
+				try {
+					$data = (new GatewayProtocols())->decode($process->read());
+					switch ($data->cmd) {
+						case GatewayProtocols::CMD_REGISTER://注册
+							break;
+						
+						case GatewayProtocols::CMD_PROCESS_DISCONNECT:
+							$this->console->error('网关断开连接');
+							break;
+						
+						case GatewayProtocols::CMD_ON_CONNECT_GATEWAY://网关连接成功
+							$this->initServKey();//找网关注册
+							break;
+						default:
+							//其他类型消息一律分配worker处理
+							$serv->sendMessage($data->encode(), mt_rand(1, 3));
+							break;
+					}
+				} catch (\Exception $e) {
+					$this->console->error($e->getMessage());
+				}
+			});
+	}
+	
+	/**
 	 * 给用户发消息
 	 * @param $from_uid
 	 * @param $to_uid
@@ -509,11 +527,11 @@ class WebSocket extends MessageHandler
 	 */
 	protected function sendToUID($from_uid, $to_uid, $content)
 	{
-		$request        = new GatewayProtocols();
-		$request->cmd   = GatewayProtocols::CMD_SEND_TO_UID;
-		$request->key   = $from_uid;
-		$request->extra = $to_uid;
-		$request->data  = json_encode($content);
+		$request           = new GatewayProtocols();
+		$request->cmd      = GatewayProtocols::CMD_SEND_TO_UID;
+		$request->from_uid = $from_uid;
+		$request->to_uid   = $to_uid;
+		$request->data     = $content;
 		$this->process->write($request->encode());
 	}
 }
