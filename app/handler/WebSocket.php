@@ -113,7 +113,7 @@ class WebSocket extends MessageHandler
 		$req_data       = new GatewayProtocols();
 		$req_data->cmd  = GatewayProtocols::CMD_REGISTER_USER;
 		$req_data->fd   = $fd;
-		$req_data->data = $user_type . $uid;
+		$req_data->data = $user_type . '_' . $uid;
 		$req_data->key  = $this->serv_key;
 		$this->localBindUID($serv, $fd, $uid, $user_type);
 		return $this->process->write($req_data->encode());
@@ -128,11 +128,7 @@ class WebSocket extends MessageHandler
 	 */
 	protected function localBindUID(swoole_websocket_server $serv, $fd, $id, $type)
 	{
-		if ($type === GatewayProtocols::TYPE_USER_ACCOUNT) {
-			$uid = (int)('1' . $id);
-		} else {
-			$uid = (int)('2' . $id);
-		}
+		$uid = (int)"$type" . $id;
 		return $serv->bind($fd, $uid);//当前绑定一个uid
 	}
 	
@@ -147,13 +143,7 @@ class WebSocket extends MessageHandler
 		$clientInfo = $serv->getClientInfo($fd);
 		$uid        = $clientInfo['uid'];
 		$type       = substr($uid, 0, 1);
-		if ($type == 1) {
-			//account
-			return 'A' . substr($uid, 1, strlen($uid) - 1);
-		} else {
-			//user
-			return 'U' . substr($uid, 1, strlen($uid) - 1);
-		}
+		return $type . '_' . substr($uid, 1, strlen($uid) - 1);
 	}
 	
 	/**
@@ -278,6 +268,7 @@ class WebSocket extends MessageHandler
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
 			$fd = $data->fd;
+			var_dump($data);
 			if ($serv->isEstablished($fd)) {
 				$messageSend                 = new MessageSendProtocols();
 				$messageSend->cmd            = MessageSendProtocols::CMD_SEND;//发送消息
@@ -286,6 +277,7 @@ class WebSocket extends MessageHandler
 				$messageSend->from_uid       = $data->extra;
 				$messageSend->from_user_type = 2;
 				$messageSend->data           = $data->data;
+				var_dump($messageSend);
 				return $serv->push($fd, $messageSend->encode());//向fd发消息
 			}
 		} else {
@@ -308,18 +300,18 @@ class WebSocket extends MessageHandler
 			return $serv->push($fd, 'pong');
 		} else {
 			switch ($data['cmd']) {
-				case 'send'://{"cmd":"send","to_uid":"A16","data":{"content_type":"text","content":"666"}}
-					$content = $data['data'];
-					$to_uid  = $data['to_uid'];
-					if (!in_array(substr($to_uid, 0, 1), ['A', 'U'])) {
-						return $this->result($serv, $fd, '接受者消息格式不正确', 'text', 'error', 'tips');
-					}
-					return $this->sendToUID($uid, $to_uid, $content);
+				case 'send'://{"cmd":"send","to_uid":"16","to_user_type":"2","data":{"content_type":"text","content":"666"}}
+					$content      = $data['data'];
+					$to_uid       = $data['to_uid'];
+					$to_user_type = $data['to_user_type'];
+					return $this->sendToUID($uid, $to_uid, $to_user_type, $content);
 					break;
 				case 'message_list'://{"cmd":"message_list","page":"1","uid":"16"}
-					$page    = $data['page'];
-					$utype   = substr($uid, 0, 1) === GatewayProtocols::TYPE_USER_ACCOUNT ? 2 : 1;//用户类型
-					$user_id = substr($uid, 1, strlen($uid) - 1);
+					$page = $data['page'];
+					
+					$uid_array = explode('_', $uid);
+					$utype     = $uid_array[0];//用户类型
+					$user_id   = $uid_array[1];
 					
 					$where                   = new Where();//他发的
 					$where['from_uid']       = $user_id;
@@ -525,13 +517,15 @@ class WebSocket extends MessageHandler
 	 * @param $to_uid
 	 * @param $content
 	 */
-	protected function sendToUID($from_uid, $to_uid, $content)
+	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content)
 	{
-		$request           = new GatewayProtocols();
-		$request->cmd      = GatewayProtocols::CMD_SEND_TO_UID;
-		$request->from_uid = $from_uid;
-		$request->to_uid   = $to_uid;
-		$request->data     = $content;
+		$request               = new GatewayProtocols();
+		$request->cmd          = GatewayProtocols::CMD_SEND_TO_UID;
+		$request->from_uid     = $from_uid;
+		$request->to_uid       = $to_uid;
+		$request->to_user_type = $to_user_type;
+		$request->data         = $content;
+		
 		$this->process->write($request->encode());
 	}
 }

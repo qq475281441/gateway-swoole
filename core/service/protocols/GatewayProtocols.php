@@ -26,8 +26,8 @@ class GatewayProtocols
 	const CMD_SEND_TO_UID              = 9;//发送给uid
 	const TYPE_SOCKET                  = 1;//服务类型为socket
 	const TYPE_WEB_SOCKET              = 2;//服务类型为websocket
-	const TYPE_USER_ACCOUNT            = 'A';//商家
-	const TYPE_USER_U                  = 'U';//买家
+	const TYPE_USER_ACCOUNT            = 2;//商家
+	const TYPE_USER_U                  = 1;//买家
 	
 	public $cmd;//命令
 	
@@ -44,6 +44,10 @@ class GatewayProtocols
 	public $from_uid;
 	
 	public $to_uid;
+	
+	public $from_user_type;
+	
+	public $to_user_type;
 	
 	/**
 	 * 协议配置项
@@ -64,14 +68,16 @@ class GatewayProtocols
 	public function encode()
 	{
 		$data  = [
-			'cmd'        => $this->cmd,
-			'key'        => $this->key,
-			'fd'         => $this->fd,
-			'master_pid' => $this->master_pid,
-			'from_uid'   => $this->from_uid,
-			'to_uid'     => $this->to_uid,
-			'data'       => $this->data,
-			'extra'      => $this->extra,
+			'cmd'            => $this->cmd,
+			'key'            => $this->key,
+			'fd'             => $this->fd,
+			'master_pid'     => $this->master_pid,
+			'from_uid'       => $this->from_uid,
+			'from_user_type' => $this->from_user_type,
+			'to_uid'         => $this->to_uid,
+			'to_user_type'   => $this->to_user_type,
+			'data'           => $this->data,
+			'extra'          => $this->extra,
 		];
 		$str   = json_encode($data);
 		$final = pack('N', strlen($str)) . $str;
@@ -85,18 +91,20 @@ class GatewayProtocols
 	 */
 	public function decode($string)
 	{
-		$info             = unpack('N', $string);
-		$len              = $info[1];
-		$body             = substr($string, -$len);
-		$data             = json_decode($body, true);
-		$this->cmd        = $data['cmd'];
-		$this->key        = isset($data['key']) ? $data['key'] : '';
-		$this->fd         = isset($data['fd']) ? $data['fd'] : '';
-		$this->from_uid   = isset($data['from_uid']) ? $data['from_uid'] : '';
-		$this->to_uid     = isset($data['to_uid']) ? $data['to_uid'] : '';
-		$this->master_pid = isset($data['master_pid']) ? $data['master_pid'] : '';
-		$this->data       = isset($data['data']) ? $data['data'] : '';
-		$this->extra      = isset($data['extra']) ? $data['extra'] : '';
+		$info                 = unpack('N', $string);
+		$len                  = $info[1];
+		$body                 = substr($string, -$len);
+		$data                 = json_decode($body, true);
+		$this->cmd            = $data['cmd'];
+		$this->key            = isset($data['key']) ? $data['key'] : '';
+		$this->fd             = isset($data['fd']) ? $data['fd'] : '';
+		$this->from_uid       = isset($data['from_uid']) ? $data['from_uid'] : '';
+		$this->from_user_type = isset($data['from_user_type']) ? $data['from_user_type'] : '';
+		$this->to_uid         = isset($data['to_uid']) ? $data['to_uid'] : '';
+		$this->to_user_type   = isset($data['to_user_type']) ? $data['to_user_type'] : '';
+		$this->master_pid     = isset($data['master_pid']) ? $data['master_pid'] : '';
+		$this->data           = isset($data['data']) ? $data['data'] : '';
+		$this->extra          = isset($data['extra']) ? $data['extra'] : '';
 		return $this;
 	}
 }

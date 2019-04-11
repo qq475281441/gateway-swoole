@@ -101,7 +101,7 @@ class GatewayHandler extends MessageHandler
 					}
 					break;
 				case  GatewayProtocols::CMD_SEND_TO_UID://往uid发消息
-					$fds = $this->user_table->get($data->to_uid);
+					$fds = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
 					if ($fds && $fds <> '' && isset($fds['data'])) {
 						$fds = json_decode($fds['data'], true);//该用户绑定的fd
 						if (!$fds) {
