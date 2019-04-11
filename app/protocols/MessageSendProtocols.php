@@ -15,7 +15,11 @@ namespace app\protocols;
  */
 class MessageSendProtocols
 {
-	const CMD_SEND    = 1;//消息发送
+	const CMD_SEND_MESSAGE    = 1;//消息发送
+	const CMD_TIPS            = 2;//系统提示
+	const CMD_MESSAGE_LIST    = 3;//消息列表
+	const CONTENT_TYPE_TEXT   = 1;//content-type text
+	const CONTENT_TYPE_IMAGES = 2;//content-type images
 	
 	public $cmd;
 	
@@ -31,6 +35,8 @@ class MessageSendProtocols
 	
 	public $extra;
 	
+	public $msg = 'success';//状态信息
+	
 	/**
 	 * 将要发的数据编码
 	 * @return false|string
@@ -39,6 +45,7 @@ class MessageSendProtocols
 	{
 		$data = [
 			'cmd'            => $this->cmd,
+			'msg'            => $this->msg,
 			'from_uid'       => $this->from_uid,
 			'from_user_type' => $this->from_user_type,
 			'to_uid'         => $this->to_uid,
@@ -59,6 +66,7 @@ class MessageSendProtocols
 	{
 		$data                 = json_decode($string, true);
 		$this->cmd            = $data['cmd'];
+		$this->msg            = isset($data['msg']) ? $data['msg'] : 'success';
 		$this->from_uid       = isset($data['from_uid']) ? $data['from_uid'] : '';
 		$this->from_user_type = isset($data['from_user_type']) ? $data['from_user_type'] : '';
 		$this->to_uid         = isset($data['to_uid']) ? $data['to_uid'] : '';

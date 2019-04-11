@@ -83,20 +83,20 @@ class WebSocket extends MessageHandler
 	{
 		$_GET = $request->get;
 		if (!isset($_GET['token']) || !isset($_GET['type'])) {
-			$this->result($serv, $request->fd, '缺少token或type', 'text', 'token_invalid', 'tips');
+			$this->result($serv, $request->fd, '缺少token或type', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
 		if ($_GET['type'] == 'account' && !isset($_GET['authtype'])) {
-			$this->result($serv, $request->fd, '缺少authtype', 'text', 'token_invalid', 'tips');
+			$this->result($serv, $request->fd, '缺少authtype', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
 		
 		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
 			//验证通过,在网关绑定uid
 			$this->bindID($serv, $request->fd, $uid, $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT);
-			return $this->result($serv, $request->fd, $uid, 'text', 'login_success', 'tips');
+			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'success');
 		} else {
-			$this->result($serv, $request->fd, 'token无效', 'text', 'token_invalid', 'tips');
+			$this->result($serv, $request->fd, 'token无效', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			co::sleep(100);
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
@@ -268,16 +268,15 @@ class WebSocket extends MessageHandler
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
 			$fd = $data->fd;
-			var_dump($data);
 			if ($serv->isEstablished($fd)) {
 				$messageSend                 = new MessageSendProtocols();
-				$messageSend->cmd            = MessageSendProtocols::CMD_SEND;//发送消息
-				$messageSend->to_user_type   = 1;
-				$messageSend->to_uid         = $data->key;
-				$messageSend->from_uid       = $data->extra;
-				$messageSend->from_user_type = 2;
+				$messageSend->cmd            = MessageSendProtocols::CMD_SEND_MESSAGE;//发送消息
+				$messageSend->to_user_type   = $data->to_user_type;
+				$messageSend->to_uid         = $data->to_uid;
+				$messageSend->from_uid       = $data->from_uid;
+				$messageSend->from_user_type = $data->from_user_type;
 				$messageSend->data           = $data->data;
-				var_dump($messageSend);
+				
 				return $serv->push($fd, $messageSend->encode());//向fd发消息
 			}
 		} else {
@@ -300,16 +299,25 @@ class WebSocket extends MessageHandler
 			return $serv->push($fd, 'pong');
 		} else {
 			switch ($data['cmd']) {
-				case 'send'://{"cmd":"send","to_uid":"16","to_user_type":"2","data":{"content_type":"text","content":"666"}}
-					$content      = $data['data'];
+				case 'send'://{"cmd":"send","to_uid":"16","to_user_type":"2","content_type":"1","content":"666"}
+					if (!in_array($data['content_type'], [MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CONTENT_TYPE_IMAGES])) {
+						return $this->result($serv, $fd, 'content_type错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
+					}
+					if(mb_strlen($data['content'])>500){
+						return $this->result($serv, $fd, '最多500个字符', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
+					}
 					$to_uid       = $data['to_uid'];
 					$to_user_type = $data['to_user_type'];
+					$content      = [
+						'content'      => $data['content'],
+						'content_type' => $data['content_type'],
+					];
+					
 					return $this->sendToUID($uid, $to_uid, $to_user_type, $content);
 					break;
 				case 'message_list'://{"cmd":"message_list","page":"1","uid":"16"}
-					$page = $data['page'];
-					
-					$uid_array = explode('_', $uid);
+					$page      = $data['page'];
+					$uid_array = explode('_', $uid);//2_16
 					$utype     = $uid_array[0];//用户类型
 					$user_id   = $uid_array[1];
 					
@@ -330,7 +338,7 @@ class WebSocket extends MessageHandler
 						->order('create_time desc')
 						->paginate(20, false, ['page' => $page]);
 					
-					return $this->result($serv, $fd, $message->toArray(), '', 'message_list', 'api');
+					return $this->result($serv, $fd, $message->toArray(), 0, MessageSendProtocols::CMD_MESSAGE_LIST, 'success');
 					break;
 			}
 		}
@@ -410,27 +418,22 @@ class WebSocket extends MessageHandler
 	 * @param swoole_server $serv 服务
 	 * @param               $fd         接受者fd
 	 * @param               $content    消息正文
-	 * @param string        $type 消息的类型，目前是text和image
+	 * @param int           $cmd
 	 * @param string        $msg 提示信息
-	 * @param string        $from sys:系统，user：买家，account：卖家，admin:管理员
 	 * @return bool
 	 */
-	protected function result(swoole_server $serv, $fd, $content, $type = 'text', $msg = 'success', $from = 'user')
+	protected function result(swoole_server $serv, $fd, $content, $content_type = MessageSendProtocols::CONTENT_TYPE_TEXT, $cmd = MessageSendProtocols::CMD_TIPS, $msg = 'success')
 	{
 		if (!is_array($content) && !trim($content)) {
 			return false;
 		}
-		$data = [
-			'msg'  => $msg,
-			'from' => $from,
-			'data' => [
-				'content' => $content,
-				'type'    => $type,
-			],
-		];
+		$response       = new MessageSendProtocols();
+		$response->cmd  = $cmd;
+		$response->data = is_array($content) ? $content : ['content' => $content, 'content_type' => $content_type];
+		$response->msg  = $msg;
 		
 		if ($serv->isEstablished($fd)) {
-			return $serv->push($fd, json_encode($data));
+			return $serv->push($fd, $response->encode());
 		}
 	}
 	
@@ -519,13 +522,34 @@ class WebSocket extends MessageHandler
 	 */
 	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content)
 	{
-		$request               = new GatewayProtocols();
-		$request->cmd          = GatewayProtocols::CMD_SEND_TO_UID;
-		$request->from_uid     = $from_uid;
-		$request->to_uid       = $to_uid;
-		$request->to_user_type = $to_user_type;
-		$request->data         = $content;
+		$uid_array = explode('_', $from_uid);//2_16
+		$utype     = $uid_array[0];//用户类型
+		$user_id   = $uid_array[1];
+		
+		$request                 = new GatewayProtocols();
+		$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
+		$request->from_uid       = $user_id;
+		$request->from_user_type = $utype;
+		$request->to_uid         = $to_uid;
+		$request->to_user_type   = $to_user_type;
+		$request->data           = $content;
 		
 		$this->process->write($request->encode());
+		
+		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type) {
+			Db::name('user_message')->insert(
+				[
+					'content'        => $content['content'],
+					'content_type'   => $content['content_type'],
+					'from_uid'       => $user_id,
+					'from_user_type' => $utype,
+					'create_time'    => time(),
+					'to_uid'         => $to_uid,
+					'to_user_type'   => $to_user_type,
+				]);
+			$account_id = $utype == 2 ? $user_id : $to_uid;
+			$user_id    = $to_user_type == 1 ? $to_uid : $user_id;
+			Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update(['update_time' => time()]);
+		});
 	}
 }
