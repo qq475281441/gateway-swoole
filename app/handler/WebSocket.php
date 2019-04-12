@@ -383,6 +383,9 @@ class WebSocket extends MessageHandler
 					if (!in_array($data['content_type'], [MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CONTENT_TYPE_IMAGES])) {
 						return $this->result($serv, $fd, 'content_type错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
 					}
+					if (!is_array($data['content']) && !trim($data['content'])) {//不可以发空消息
+						return false;
+					}
 					if (mb_strlen($data['content']) > 500) {
 						return $this->result($serv, $fd, '最多500个字符', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
 					}
@@ -405,6 +408,28 @@ class WebSocket extends MessageHandler
 					//						return $this->result($this->ser)
 					//		}
 					return $this->sendToUID($uid, $to_uid, $to_user_type, $content, $fd);
+					break;
+				case 'list_item'://{"cmd":"list_item","uid":"1"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2') {
+						
+						return false;
+					}
+					$message_list  = Db::name('account_message_list')->where('account_id', $user['user_id'])
+						->where('user_id', $data['uid'])
+						->field('account_id,user_id,last_message_id,message_list_id,update_time')
+						->cache(true, 600)
+						->find();
+					$user_relation = Db::name('account_user_relation')->field('user_remark,need_notice')->where('account_id', $user['user_id'])
+						->where('user_id', $data['uid'])->cache(true, 600)->find();
+					$user          = Db::name('user')->field('nickname')->where('user_id', $data['uid'])->cache(true, 600)->find();
+					$last_message  = Db::name('user_message')->field('content,from_uid,content_type')
+						->where('message_id', $message_list['last_message_id'])->cache(true, 600)->find();
+					
+					$message_list['name']    = $user_relation['user_remark'] ?: $user['nickname'];
+					$message_list['message'] = $message_list['last_message_id'] ? $last_message : new \stdClass();
+					
+					return $this->result($serv, $fd, $message_list, 0, MessageSendProtocols::CMD_TIPS);
 					break;
 				case 'user_info'://{"cmd":"user_info","uid":"Tkzljq"}
 					$mine  = [];//自己的信息
@@ -669,9 +694,6 @@ class WebSocket extends MessageHandler
 	 */
 	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content, $fd)
 	{
-		if (!is_array($content) && !trim($content)) {//不可以发空消息
-			return false;
-		}
 		$uid_array = explode('_', $from_uid);//2_16
 		$utype     = $uid_array[0];//用户类型
 		$user_id   = $uid_array[1];
@@ -687,8 +709,9 @@ class WebSocket extends MessageHandler
 		
 		$this->process->write($request->encode());
 		
-		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type) {
-			Db::name('user_message')->insert(
+		$chan_id = new \Chan(1);
+		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type, $chan_id) {
+			$insertId = Db::name('user_message')->insertGetId(
 				[
 					'content'        => $content['content'],
 					'content_type'   => $content['content_type'],
@@ -698,11 +721,20 @@ class WebSocket extends MessageHandler
 					'to_uid'         => $to_uid,
 					'to_user_type'   => $to_user_type,
 				]);
+			if ($insertId) {
+				$chan_id->push($insertId);
+			}
 		});
-		go(function () use ($utype, $user_id, $to_uid, $to_user_type) {
-			$account_id = $utype == 2 ? $user_id : $to_uid;
-			$user_id    = $to_user_type == 1 ? $to_uid : $user_id;
-			Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update(['update_time' => time()]);
+		go(function () use ($utype, $user_id, $to_uid, $to_user_type, $chan_id, $from_uid) {
+			if ($msg_id = $chan_id->pop(100)) {
+				$account_id            = $utype == 2 ? $user_id : $to_uid;
+				$user_id               = $to_user_type == 1 ? $to_uid : $user_id;
+				$update['update_time'] = time();
+				if ($from_uid == '1') {//买家发的
+					$update['last_message_id'] = $msg_id;
+				}
+				Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update($update);
+			}
 		});
 	}
 }
