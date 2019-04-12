@@ -90,16 +90,70 @@ class WebSocket extends MessageHandler
 			$this->result($serv, $request->fd, '缺少authtype', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
-		
-		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], $_GET['authtype'])) {
+		if ($_GET['type'] == 'user' && !isset($_GET['link'])) {
+			$this->result($serv, $request->fd, 'link', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'miss_link');
+			return $serv->disconnect($request->fd, 1004, 'miss_link');
+		}
+		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], isset($_GET['authtype']) ? $_GET['authtype'] : '')) {
 			//验证通过,在网关绑定uid
 			$this->bindID($serv, $request->fd, $uid, $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT);
-			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'success');
+			if ($_GET['type'] == 'user') {
+				$this->bind_account($uid, $_GET['link']);
+			}
+			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'login_success');
 		} else {
 			$this->result($serv, $request->fd, 'token无效', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			co::sleep(100);
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
+	}
+	
+	/**
+	 * 绑定商家
+	 * @param $uid
+	 * @param $link
+	 */
+	private function bind_account($uid, $link)
+	{
+		$chan_router = new \Chan(1);
+		go(function () use ($uid, $link, $chan_router) {
+			$router = Db::name('router')->where('short_url', $link)->field('account_id')->cache(true, 600)->find();
+			$chan_router->push($router);
+		});
+		
+		go(function () use ($uid, $link, $chan_router) {
+			$router = $chan_router->pop(1);
+			$chan_router->push($router);
+			$exis_relation = Db::name('account_user_relation')->where('account_id', $router['account_id'])
+				->where('user_id', $uid)
+				->field('account_id')->find();
+			if (!$exis_relation) {//不存在好友关系
+				Db::name('account_user_relation')->insert(
+					[
+						'account_id'  => $router['account_id'],
+						'user_id'     => $uid,
+						'create_time' => time(),
+					]
+				);
+			}
+		});
+		
+		go(function () use ($uid, $link, $chan_router) {
+			$router            = $chan_router->pop(1);
+			$exis_message_list = Db::name('account_message_list')->where('account_id', $router['account_id'])
+				->where('user_id', $uid)
+				->field('account_id')->find();
+			if (!$exis_message_list) {//商家消息列表不存在
+				Db::name('account_message_list')->insert(
+					[
+						'account_id'  => $router['account_id'],
+						'user_id'     => $uid,
+						'create_time' => time(),
+						'update_time' => time(),
+					]
+				);
+			}
+		});
 	}
 	
 	/**
@@ -276,12 +330,38 @@ class WebSocket extends MessageHandler
 				$messageSend->from_uid       = $data->from_uid;
 				$messageSend->from_user_type = $data->from_user_type;
 				$messageSend->data           = $data->data;
+				$messageSend->time           = time();
 				
 				return $serv->push($fd, $messageSend->encode());//向fd发消息
 			}
 		} else {
 			$this->console->error('无效消息');
 		}
+	}
+	
+	/**
+	 * 获取account_id
+	 * @param $link
+	 * @return bool|mixed
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
+	 */
+	private function get_account_by_link($link)
+	{
+		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, 600)->find();
+		return $router ? $router['account_id'] : false;
+	}
+	
+	/**
+	 * 解析本地uid
+	 * @param $uid
+	 * @return array
+	 */
+	private function explore_local_uid($uid)
+	{
+		$uid_array = explode('_', $uid);//2_16
+		return ['user_type' => $uid_array[0], 'user_id' => $uid_array[1]];
 	}
 	
 	/**
@@ -299,11 +379,11 @@ class WebSocket extends MessageHandler
 			return $serv->push($fd, 'pong');
 		} else {
 			switch ($data['cmd']) {
-				case 'send'://{"cmd":"send","to_uid":"16","to_user_type":"2","content_type":"1","content":"666"}
+				case 'send'://{"cmd":"send","to_uid":"Tkzljq","to_user_type":"2","content_type":"1","content":"666"}
 					if (!in_array($data['content_type'], [MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CONTENT_TYPE_IMAGES])) {
 						return $this->result($serv, $fd, 'content_type错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
 					}
-					if(mb_strlen($data['content'])>500){
+					if (mb_strlen($data['content']) > 500) {
 						return $this->result($serv, $fd, '最多500个字符', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'error');
 					}
 					$to_uid       = $data['to_uid'];
@@ -312,33 +392,97 @@ class WebSocket extends MessageHandler
 						'content'      => $data['content'],
 						'content_type' => $data['content_type'],
 					];
+					if ($to_user_type == '2') {
+						//将店铺链接转为account_id
+						$to_uid = $this->get_account_by_link($to_uid);
+						if (!$to_uid) {
+							return $this->result($serv, $fd, '接收方错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'uid_error');
+						}
+					}
 					
-					return $this->sendToUID($uid, $to_uid, $to_user_type, $content);
+					//					if ($user_id == $to_uid && $utype == $to_user_type) {
+					//						//自己发给自己
+					//						return $this->result($this->ser)
+					//		}
+					return $this->sendToUID($uid, $to_uid, $to_user_type, $content, $fd);
 					break;
-				case 'message_list'://{"cmd":"message_list","page":"1","uid":"16"}
+				case 'user_info'://{"cmd":"user_info","uid":"Tkzljq"}
+					$mine  = [];//自己的信息
+					$their = [];
+					$uid   = $this->explore_local_uid($uid);
+					if ($uid['user_type'] == '2') {
+						//本机的用户类型为商家
+						$mine                 = Db::name('account')->field('show_name,head_img_url')->where('account_id', $uid['user_id'])
+							->cache(true, 600)->find();
+						$user                 = Db::name('user')->where('user_id', $data['uid'])->field('nickname,phone,user_id')->find();
+						$relation             = Db::name('account_user_relation')->where('account_id', $uid['user_id'])
+							->field('user_remark,need_notice')
+							->where('user_id', $data['uid'])
+							->cache(true, 600)
+							->find();
+						$their['name']        = $relation['user_remark'] ?: $user['nickname'];
+						$their['need_notice'] = $user['need_notice'];
+						$their['phone']       = substr($user['phone'], 1, 3) . '***';
+						$their['user_id']     = $user['user_id'];
+					} else {
+						//本机的用户类型为买家
+						$mine = Db::name('user')->where('user_id', $uid['user_id'])->field('nickname,phone,user_id')->find();
+						
+						$router                = Db::name('router')->field('show_name,account_id,short_url')->where('short_url', $data['uid'])
+							->cache(true, 600)->find();
+						$account               = Db::name('account')->field('show_name,head_img_url')->where('account_id', $router['account_id'])
+							->cache(true, 600)->find();
+						$their['show_name']    = $router['show_name'] ?: $account['show_name'];
+						$their['head_img_url'] = $account['head_img_url'];
+					}
+					
+					return $this->result($serv, $fd, ['mine' => $mine, 'their' => $their], 0, MessageSendProtocols::CMD_USERINFO);
+					
+					break;
+				case 'message_list'://{"cmd":"message_list","page":"1","uid":"Tkzljq"}
 					$page      = $data['page'];
 					$uid_array = explode('_', $uid);//2_16
 					$utype     = $uid_array[0];//用户类型
 					$user_id   = $uid_array[1];
 					
+					$search_uid = $data['uid'];
+					if ($utype == '1') {
+						//将店铺链接转为account_id
+						$search_uid = $this->get_account_by_link($search_uid);
+						if (!$search_uid) {
+							return $this->result($serv, $fd, 'uid错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'uid_error');
+						}
+					}
+					
 					$where                   = new Where();//他发的
 					$where['from_uid']       = $user_id;
 					$where['from_user_type'] = $utype;
-					$where['to_uid']         = $data['uid'];
+					$where['to_uid']         = $search_uid;
 					$where['to_user_type']   = $utype == 1 ? 2 : 1;
 					
 					$whereOr                   = new Where();//他接收的
 					$whereOr['to_uid']         = $user_id;
 					$whereOr['to_user_type']   = $utype;
-					$whereOr['from_uid']       = $data['uid'];
+					$whereOr['from_uid']       = $search_uid;
 					$whereOr['from_user_type'] = $utype == 1 ? 2 : 1;
 					
-					$message = Db::name('user_message')->where($where)->whereOr($whereOr)
-						->field('from_uid,from_user_type,to_uid,to_user_type,content,content_type')
-						->order('create_time desc')
-						->paginate(20, false, ['page' => $page]);
+					$chan_message = new \Chan(1);
+					go(function () use ($where, $whereOr, $page, $chan_message) {
+						$message = Db::name('user_message')->where($where)->whereOr($whereOr)
+							->field('from_uid,from_user_type,to_uid,to_user_type,content,content_type,create_time')
+							->order('create_time desc')
+							->paginate(20, false, ['page' => $page]);
+						$chan_message->push($message);
+					});
 					
-					return $this->result($serv, $fd, $message->toArray(), 0, MessageSendProtocols::CMD_MESSAGE_LIST, 'success');
+					go(function () use ($where, $whereOr, $page, $chan_message, $serv, $search_uid, $fd) {
+						$message          = $chan_message->pop(100);
+						$account_head_img = Db::name('account')->where('account_id', $search_uid)->field('head_img_url')
+							->cache(true, 600)->find();
+						
+						return $this->result($serv, $fd, $message->toArray(), 0, MessageSendProtocols::CMD_MESSAGE_LIST, 'success', $account_head_img['head_img_url']);
+					});
+					
 					break;
 			}
 		}
@@ -422,15 +566,17 @@ class WebSocket extends MessageHandler
 	 * @param string        $msg 提示信息
 	 * @return bool
 	 */
-	protected function result(swoole_server $serv, $fd, $content, $content_type = MessageSendProtocols::CONTENT_TYPE_TEXT, $cmd = MessageSendProtocols::CMD_TIPS, $msg = 'success')
+	protected function result(swoole_server $serv, $fd, $content, $content_type = MessageSendProtocols::CONTENT_TYPE_TEXT, $cmd = MessageSendProtocols::CMD_TIPS, $msg = 'success', $extra = '')
 	{
 		if (!is_array($content) && !trim($content)) {
 			return false;
 		}
-		$response       = new MessageSendProtocols();
-		$response->cmd  = $cmd;
-		$response->data = is_array($content) ? $content : ['content' => $content, 'content_type' => $content_type];
-		$response->msg  = $msg;
+		$response        = new MessageSendProtocols();
+		$response->cmd   = $cmd;
+		$response->data  = is_array($content) ? $content : ['content' => $content, 'content_type' => $content_type];
+		$response->msg   = $msg;
+		$response->extra = $extra;
+		$response->time  = time();
 		
 		if ($serv->isEstablished($fd)) {
 			return $serv->push($fd, $response->encode());
@@ -519,9 +665,13 @@ class WebSocket extends MessageHandler
 	 * @param $from_uid
 	 * @param $to_uid
 	 * @param $content
+	 * @return bool
 	 */
-	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content)
+	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content, $fd)
 	{
+		if (!is_array($content) && !trim($content)) {//不可以发空消息
+			return false;
+		}
 		$uid_array = explode('_', $from_uid);//2_16
 		$utype     = $uid_array[0];//用户类型
 		$user_id   = $uid_array[1];
@@ -533,6 +683,7 @@ class WebSocket extends MessageHandler
 		$request->to_uid         = $to_uid;
 		$request->to_user_type   = $to_user_type;
 		$request->data           = $content;
+		$request->fd             = $fd;
 		
 		$this->process->write($request->encode());
 		
@@ -547,6 +698,8 @@ class WebSocket extends MessageHandler
 					'to_uid'         => $to_uid,
 					'to_user_type'   => $to_user_type,
 				]);
+		});
+		go(function () use ($utype, $user_id, $to_uid, $to_user_type) {
 			$account_id = $utype == 2 ? $user_id : $to_uid;
 			$user_id    = $to_user_type == 1 ? $to_uid : $user_id;
 			Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update(['update_time' => time()]);

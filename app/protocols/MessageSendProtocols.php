@@ -18,6 +18,7 @@ class MessageSendProtocols
 	const CMD_SEND_MESSAGE    = 1;//消息发送
 	const CMD_TIPS            = 2;//系统提示
 	const CMD_MESSAGE_LIST    = 3;//消息列表
+	const CMD_USERINFO          = 4;//详情接口
 	const CONTENT_TYPE_TEXT   = 1;//content-type text
 	const CONTENT_TYPE_IMAGES = 2;//content-type images
 	
@@ -37,6 +38,8 @@ class MessageSendProtocols
 	
 	public $msg = 'success';//状态信息
 	
+	public $time;
+	
 	/**
 	 * 将要发的数据编码
 	 * @return false|string
@@ -52,13 +55,14 @@ class MessageSendProtocols
 			'to_user_type'   => $this->to_user_type,
 			'data'           => $this->data,
 			'extra'          => $this->extra,
+			'time'           => $this->time,
 		];
 		$str  = json_encode($data);
 		return $str;
 	}
 	
 	/**
-	 *解码
+	 *  解码
 	 * @param $string
 	 * @return $this
 	 */
@@ -72,6 +76,7 @@ class MessageSendProtocols
 		$this->to_uid         = isset($data['to_uid']) ? $data['to_uid'] : '';
 		$this->to_user_type   = isset($data['to_user_type']) ? $data['to_user_type'] : '';
 		$this->to_user_type   = isset($data['to_user_type']) ? $data['to_user_type'] : '';
+		$this->time           = isset($data['time']) ? $data['time'] : '';
 		
 		$this->data  = isset($data['data']) ? $data['data'] : '';
 		$this->extra = isset($data['extra']) ? $data['extra'] : '';

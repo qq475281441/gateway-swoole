@@ -101,13 +101,32 @@ class GatewayHandler extends MessageHandler
 					}
 					break;
 				case  GatewayProtocols::CMD_SEND_TO_UID://往uid发消息
-					$fds = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
-					if ($fds && $fds <> '' && isset($fds['data'])) {
-						$fds = json_decode($fds['data'], true);//该用户绑定的fd
-						if (!$fds) {
+					$recv_fds   = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
+					$sender_fds = $this->user_table->get($data->from_user_type . '_' . $data->from_uid);
+					$sender_fd  = $data->fd;
+					if ($recv_fds && $recv_fds <> '' && isset($recv_fds['data'])) {
+						$recv_fds = json_decode($recv_fds['data'], true);//该用户绑定的fd
+						if (!$recv_fds) {
 							return false;
 						}
-						foreach ($fds as $k => $v) {
+						foreach ($recv_fds as $k => $v) {
+							$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
+							$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
+							$data->fd  = $v['fd'];//需要接受消息的fd
+							if ($serv->exist($serv_fd['fd'])) {
+								$serv->send($serv_fd['fd'], $data->encode());
+							}
+						}
+					}
+					if ($sender_fds && $sender_fds <> '' && isset($sender_fds['data'])) {
+						$sender_fds = json_decode($sender_fds['data'], true);//该用户绑定的fd
+						if (!$sender_fds) {
+							return false;
+						}
+						foreach ($sender_fds as $k => $v) {
+							if ($v['fd'] == $sender_fd) {//不发送给当前这个客户端，其他fd均发送
+								continue;
+							}
 							$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
 							$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
 							$data->fd  = $v['fd'];//需要接受消息的fd
