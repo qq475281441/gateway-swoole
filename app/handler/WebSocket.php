@@ -26,6 +26,7 @@ use Swoole\Coroutine;
 use Swoole\MySQL;
 use Swoole\Process;
 use Swoole\Table;
+use Swoole\WebSocket\Frame;
 use swoole_http_request;
 use swoole_process;
 use swoole_server;
@@ -35,6 +36,9 @@ use think\db\Where;
 
 class WebSocket extends MessageHandler
 {
+	/**
+	 * @var \Redis
+	 */
 	protected $redis;
 	
 	protected $process;
@@ -338,8 +342,8 @@ class WebSocket extends MessageHandler
 				$messageSend->from_uid       = $data->from_uid;
 				$messageSend->from_user_type = $data->from_user_type;
 				$messageSend->data           = $data->data;
+				$messageSend->message_id     = $data->message_id;
 				$messageSend->time           = time();
-				
 				if ($data->from_user_type == '1') {
 					$relation                 = Db::name('account_user_relation')->where('account_id', $data->to_uid)
 						->where('user_id', $data->from_uid)
@@ -391,10 +395,16 @@ class WebSocket extends MessageHandler
 	 */
 	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
+		if ($frame->opcode == 0x08) {//客户端发送关闭帧
+			$code   = $frame->code;
+			$reason = $frame->reason;
+			$serv->close($frame->fd);
+		}
 		$fd   = $frame->fd;
 		$data = json_decode($frame->data, true);
 		$uid  = $this->getLocalBindUID($serv, $fd);
 		if ($frame->data == 'ping') {
+			$serv->push($fd, '', 0xA);
 			return $serv->push($fd, 'pong');
 		} else {
 			switch ($data['cmd']) {
@@ -560,6 +570,9 @@ class WebSocket extends MessageHandler
 						->where('message_list_id', $message_list_id)
 						->update(['is_delete' => 1]);
 					break;
+				case '':
+					
+					break;
 			}
 		}
 	}
@@ -576,65 +589,6 @@ class WebSocket extends MessageHandler
 		$user = $this->getLocalBindUID($serv, $fd);
 		$user = $this->explore_local_uid($user);
 		return $this->unbindID($serv, $fd, $user['user_id'], $user['user_type']);
-	}
-	
-	/**
-	 * 提示沟通双方文明用语
-	 * @param $content
-	 * @return array
-	 */
-	private function civilizationTips($content, $user_type)
-	{
-		if (is_array($content) || !in_array($user_type, ['account', 'user'])) {
-			return [];
-		}
-		$config = Container::get('config');
-		$key    = $config->config['civilization'];
-		
-		foreach ($key['content'] as $k => $v) {
-			if (stristr($content, $v)) {
-				return [$key['tips'][mt_rand(0, count($key['tips']) - 1)]];
-			}
-		}
-		return [];
-	}
-	
-	/**
-	 * 仅对买家的安全提示
-	 * @param $content
-	 * @return array
-	 */
-	private function safeTips($content, $user_type)
-	{
-		if (is_array($content) || $user_type <> 'account') {
-			return [];
-		}
-		$tips = [
-			'密码' => '请勿将投诉密码告诉除快发卡客服的任何人',
-			'明天' => '如商家以各种理由推脱到第二天发货，请联系快发卡QQ公众号：800157060处理',
-			'晚点' => '如商家以各种理由推脱到第二天发货，请联系快发卡QQ公众号：800157060处理',
-			'撤销' => '撤销投诉前请确保商家已经发货，且商品可以使用',
-			'撤诉' => '撤销投诉前请确保商家已经发货，且商品可以使用',
-			'死'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'你妈' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'草'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'操'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'傻逼' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'沙雕' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'SB' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'sb' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-			'艹'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
-		];
-		
-		$return = [];
-		
-		foreach ($tips as $k => $v) {
-			if (stristr($content, $k)) {
-				$return[] = $v;
-			}
-		}
-		
-		return array_unique($return);
 	}
 	
 	/**
@@ -661,18 +615,6 @@ class WebSocket extends MessageHandler
 		if ($serv->isEstablished($fd)) {
 			return $serv->push($fd, $response->encode());
 		}
-	}
-	
-	/**
-	 * 创建表保存所有ukey和fd映射
-	 * @return Table
-	 */
-	private function createTable()
-	{
-		$table = new Table(20480);//20mb
-		$table->column('ukey', Table::TYPE_STRING, 40);
-		$table->create();
-		return $table;
 	}
 	
 	/**
@@ -774,8 +716,6 @@ class WebSocket extends MessageHandler
 		$request->data           = $content;
 		$request->fd             = $fd;
 		
-		$this->process->write($request->encode());
-		
 		$chan_id = new \Chan(1);
 		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type, $chan_id) {
 			$insertId = Db::name('user_message')->insertGetId(
@@ -792,8 +732,19 @@ class WebSocket extends MessageHandler
 				$chan_id->push($insertId);
 			}
 		});
+		$message_chan = new \Chan(1);
+		go(function () use ($request, $chan_id, $message_chan) {
+			if ($msg_id = $chan_id->pop(100)) {
+				$chan_id->push($msg_id);
+				$request->message_id = $msg_id;
+				$message_chan->push($request);
+				$this->process->write($request->encode());
+			}
+		});
+		
 		go(function () use ($utype, $user_id, $to_uid, $to_user_type, $chan_id) {
 			if ($msg_id = $chan_id->pop(100)) {
+				$chan_id->push($msg_id);
 				$account_id            = $utype == 2 ? $user_id : $to_uid;
 				$user_id               = $to_user_type == 1 ? $to_uid : $user_id;
 				$update['update_time'] = time();
@@ -802,6 +753,17 @@ class WebSocket extends MessageHandler
 				}
 				$update['is_delete'] = 0;
 				Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update($update);
+				$chan_id->close();
+			}
+		});
+		
+		go(function () use ($to_user_type, $message_chan) {
+			if ($to_user_type == '2') {
+				//发给商家
+				if ($msg = $message_chan->pop(100)) {
+					$this->redis->sAdd($this->get_list_key(), $msg->encode());
+					$message_chan->close();
+				}
 			}
 		});
 	}
@@ -815,5 +777,73 @@ class WebSocket extends MessageHandler
 	private function get_relation_cache_tag($account_id, $user_id)
 	{
 		return md5($account_id . "_" . $user_id);
+	}
+	
+	/**
+	 * 提示沟通双方文明用语
+	 * @param $content
+	 * @return array
+	 */
+	private function civilizationTips($content, $user_type)
+	{
+		if (is_array($content) || !in_array($user_type, ['account', 'user'])) {
+			return [];
+		}
+		$config = Container::get('config');
+		$key    = $config->config['civilization'];
+		
+		foreach ($key['content'] as $k => $v) {
+			if (stristr($content, $v)) {
+				return [$key['tips'][mt_rand(0, count($key['tips']) - 1)]];
+			}
+		}
+		return [];
+	}
+	
+	/**
+	 * 仅对买家的安全提示
+	 * @param $content
+	 * @return array
+	 */
+	private function safeTips($content, $user_type)
+	{
+		if (is_array($content) || $user_type <> 'account') {
+			return [];
+		}
+		$tips = [
+			'密码' => '请勿将投诉密码告诉除快发卡客服的任何人',
+			'明天' => '如商家以各种理由推脱到第二天发货，请联系快发卡QQ公众号：800157060处理',
+			'晚点' => '如商家以各种理由推脱到第二天发货，请联系快发卡QQ公众号：800157060处理',
+			'撤销' => '撤销投诉前请确保商家已经发货，且商品可以使用',
+			'撤诉' => '撤销投诉前请确保商家已经发货，且商品可以使用',
+			'死'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'你妈' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'草'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'操'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'傻逼' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'沙雕' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'SB' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'sb' => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+			'艹'  => '如卖家对你人身攻击，可联系快发卡QQ公众号：800157060处理',
+		];
+		
+		$return = [];
+		
+		foreach ($tips as $k => $v) {
+			if (stristr($content, $k)) {
+				$return[] = $v;
+			}
+		}
+		
+		return array_unique($return);
+	}
+	
+	/**
+	 * 消息队列key
+	 * @return string
+	 */
+	private function get_list_key()
+	{
+		return md5('unread_message');
 	}
 }

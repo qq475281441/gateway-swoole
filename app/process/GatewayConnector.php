@@ -102,7 +102,6 @@ class GatewayConnector
 					Process::kill(getmypid());//杀掉自己
 				}
 				if ($client->isConnected()) {
-					$this->console->info(date('Y-m-d H:i:s', time()) . '>>>>2消息被子进程获取并发送给网关');
 					return $client->send($data);
 				} else {
 					return $this->reconnect($client);

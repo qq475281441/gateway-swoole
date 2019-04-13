@@ -46,19 +46,19 @@ class WebSocketServer9501 extends Server
 	 * @var array
 	 */
 	protected $option
-		                       = [
-			'worker_num'               => 4,    //worker process num
-			'backlog'                  => 128,   //listen backlog
-			'daemonize'                => 0,
-			'log_file'                 => RUNTIME . 'log/ws84_server.log',
-			'log_level'                => 1,//0 => SWOOLE_LOG_DEBUG1 => SWOOLE_LOG_TRACE2 => SWOOLE_LOG_INFO3 => SWOOLE_LOG_NOTICE4 => SWOOLE_LOG_WARNING5 => SWOOLE_LOG_ERROR
-			'max_connection'           => 10000,//不填与服务器ulimit -n相同，默认不超过10000，一个连接约224bytes
-			'heartbeat_idle_time'      => 15,//15秒无数据就强制结束他
-			'heartbeat_check_interval' => 10,//每60秒进行一次轮训检测
-			'open_cpu_affinity'        => true,//cpu亲和性
-			'tcp_fastopen'             => true,
-			'enable_delay_receive'     => true,//延时收包
-			'dispatch_mode'            => 5,
+		                      = [
+			'worker_num'                => 4,    //worker process num
+			'backlog'                   => 128,   //listen backlog
+			'daemonize'                 => 0,
+			'log_file'                  => RUNTIME . 'log/ws84_server.log',
+			'log_level'                 => 1,//0 => SWOOLE_LOG_DEBUG1 => SWOOLE_LOG_TRACE2 => SWOOLE_LOG_INFO3 => SWOOLE_LOG_NOTICE4 => SWOOLE_LOG_WARNING5 => SWOOLE_LOG_ERROR
+			'max_connection'            => 10000,//不填与服务器ulimit -n相同，默认不超过10000，一个连接约224bytes
+			'heartbeat_idle_time'       => 15,//15秒无数据就强制结束他
+			'heartbeat_check_interval'  => 10,//每60秒进行一次轮训检测
+			'open_cpu_affinity'         => true,//cpu亲和性
+			'tcp_fastopen'              => true,
+			'enable_delay_receive'      => true,//延时收包
+			'dispatch_mode'             => 5,
 			/**
 			 * 1，轮循模式，收到会轮循分配给每一个Worker进程
 			 * 2，固定模式，根据连接的文件描述符分配Worker。这样可以保证同一个连接发来的数据只会被同一个Worker处理
@@ -69,9 +69,10 @@ class WebSocketServer9501 extends Server
 			 */
 			//			'pipe_buffer_size' => 64 * 1024 *1024, //必须为数字，调整管道通信的内存缓存区长度。Swoole使用Unix Socket实现进程间通信，没卵用，被废弃
 			//			'task_ipc_mode'            => '2',
-			'max_coroutine'            => 10000,
+			'max_coroutine'             => 10000,
+			'pen_websocket_close_frame' => true,
 			//			'buffer_high_watermark' => 8 * 1024 * 1024,//控制FD缓存区高水位线，单位为字节
-			//			'send_yield'               => true,//发送数据协程调度
+			'send_yield'                => true,//发送数据协程调度
 			//			'task_worker_num'          => 1,
 			//			// 设置worker/task子进程的所属用户
 			//			'user'                     => 'www',
@@ -81,9 +82,9 @@ class WebSocketServer9501 extends Server
 		
 		];
 	
-	public    $messageHandler  = WebSocket::class;//消息处理器
+	public    $messageHandler = WebSocket::class;//消息处理器
 	
-	public    $processHandler  = GatewayConnector::class;//子进程的消息处理
+	public    $processHandler = GatewayConnector::class;//子进程的消息处理
 	
 	protected $console;
 	

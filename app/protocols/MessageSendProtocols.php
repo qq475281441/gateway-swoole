@@ -37,11 +37,13 @@ class MessageSendProtocols
 	
 	public $extra;
 	
-	public $msg = 'success';//状态信息
+	public $msg         = 'success';//状态信息
 	
-	public $need_notice;
+	public $need_notice = 1;
 	
 	public $time;
+	
+	public $message_id;
 	
 	/**
 	 * 将要发的数据编码
@@ -60,6 +62,7 @@ class MessageSendProtocols
 			'extra'          => $this->extra,
 			'time'           => $this->time,
 			'need_notice'    => $this->need_notice,
+			'message_id'     => $this->message_id,
 		];
 		$str  = json_encode($data);
 		return $str;
@@ -82,6 +85,7 @@ class MessageSendProtocols
 		$this->to_user_type   = isset($data['to_user_type']) ? $data['to_user_type'] : '';
 		$this->time           = isset($data['time']) ? $data['time'] : '';
 		$this->need_notice    = isset($data['need_notice']) ? $data['need_notice'] : 1;
+		$this->message_id     = isset($data['message_id']) ? $data['message_id'] : '';
 		
 		$this->data  = isset($data['data']) ? $data['data'] : '';
 		$this->extra = isset($data['extra']) ? $data['extra'] : '';

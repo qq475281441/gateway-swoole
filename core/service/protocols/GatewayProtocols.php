@@ -51,6 +51,8 @@ class GatewayProtocols
 	
 	public $to_user_type;
 	
+	public $message_id;
+	
 	/**
 	 * 协议配置项
 	 * @var array
@@ -73,6 +75,7 @@ class GatewayProtocols
 			'cmd'            => $this->cmd,
 			'key'            => $this->key,
 			'fd'             => $this->fd,
+			'message_id'     => $this->message_id,
 			'master_pid'     => $this->master_pid,
 			'from_uid'       => $this->from_uid,
 			'from_user_type' => $this->from_user_type,
@@ -100,6 +103,7 @@ class GatewayProtocols
 		$this->cmd            = $data['cmd'];
 		$this->key            = isset($data['key']) ? $data['key'] : '';
 		$this->fd             = isset($data['fd']) ? $data['fd'] : '';
+		$this->message_id     = isset($data['message_id']) ? $data['message_id'] : '';
 		$this->from_uid       = isset($data['from_uid']) ? $data['from_uid'] : '';
 		$this->from_user_type = isset($data['from_user_type']) ? $data['from_user_type'] : '';
 		$this->to_uid         = isset($data['to_uid']) ? $data['to_uid'] : '';
