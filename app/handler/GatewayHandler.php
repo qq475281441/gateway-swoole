@@ -16,6 +16,7 @@ use im\core\handler\MessageHandler;
 use im\core\redis\Redis;
 use im\core\service\protocols\GatewayProtocols;
 use Swoole\Table;
+use swoole_lock;
 use swoole_server;
 
 class GatewayHandler extends MessageHandler
@@ -89,16 +90,40 @@ class GatewayHandler extends MessageHandler
 					$user_fd  = $data->fd;//获取fd
 					$uid      = $data->data;//获取uid
 					$serv_key = $data->key;//获取servkey
-					
-					$user_info = $this->user_table->get($uid);
-					if ($user_info && $user_info <> '') {
-						$user_info = json_decode($user_info['data'], true);
-						//检测一波用户是否在线
-						$user_info[] = ['fd' => $user_fd, 'serv_key' => $serv_key];
-						$this->user_table->set($uid, ['data' => json_encode($user_info)]);
-					} else {
-						$this->user_table->set($uid, ['data' => json_encode([['fd' => $user_fd, 'serv_key' => $serv_key]])]);
+					$lock     = new swoole_lock(SWOOLE_MUTEX);//加锁
+					if ($lock->lockwait(1)) {
+						$user_info = $this->user_table->get($uid);
+						if ($user_info && $user_info <> '') {
+							$user_info = json_decode($user_info['data'], true);
+							//检测一波用户是否在线
+							$user_info[] = ['fd' => $user_fd, 'serv_key' => $serv_key];
+							$this->user_table->set($uid, ['data' => json_encode($user_info)]);
+						} else {
+							$this->user_table->set($uid, ['data' => json_encode([['fd' => $user_fd, 'serv_key' => $serv_key]])]);
+						}
+						$lock->unlock();
 					}
+					
+					break;
+				case GatewayProtocols::CMD_UNREGISTER_USER://解绑用户某个fd
+					$user_fd  = $data->fd;//获取fd
+					$uid      = $data->data;//获取uid
+					$serv_key = $data->key;//获取servkey
+					$lock     = new swoole_lock(SWOOLE_MUTEX);//加锁
+					if ($lock->lockwait(1)) {
+						$user_info = $this->user_table->get($uid);
+						if ($user_info && $user_info <> '') {
+							$user_info = json_decode($user_info['data'], true);
+							foreach ($user_info as $k => $v) {
+								if ($v['serv_key'] == $serv_key && $v['fd'] == $user_fd) {
+									unset($user_info[$k]);
+								}
+							}
+							$this->user_table->set($uid, ['data' => json_encode($user_info)]);
+							$lock->unlock();
+						}
+					}
+					
 					break;
 				case  GatewayProtocols::CMD_SEND_TO_UID://往uid发消息
 					$recv_fds   = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);

@@ -68,8 +68,6 @@ class WebSocket extends MessageHandler
 		$this->process  = $process;//子进程保持网关连接
 		$this->console  = Container::get('console');
 		$this->auth     = $auth;
-		$this->table    = $this->createTable();
-		$this->users    = new Users($this->redis, $this->table);
 		$this->serv_key = $this->auth->getServerKey();//创建key，才可以在所有worker中共享
 	}
 	
@@ -180,6 +178,24 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
+	 * 用户close时解绑此fd
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 * @param                         $uid
+	 * @param int                     $user_type
+	 * @return int
+	 */
+	protected function unbindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT)
+	{
+		$req_data       = new GatewayProtocols();
+		$req_data->cmd  = GatewayProtocols::CMD_UNREGISTER_USER;
+		$req_data->fd   = $fd;
+		$req_data->data = $user_type . '_' . $uid;
+		$req_data->key  = $this->serv_key;
+		return $this->process->write($req_data->encode());
+	}
+	
+	/**
 	 * 本地将fd与uid绑定
 	 * @param swoole_websocket_server $serv
 	 * @param                         $fd
@@ -228,11 +244,6 @@ class WebSocket extends MessageHandler
 			$this->redis->set(md5('swoole_limit' . $remote_ip), 1, 1);//一个ip一秒钟只能调用5次onconnect
 			$serv->confirm($fd);
 		}
-		
-		if (!$this->table->set($fd, ['ukey' => $this->auth->getUkey($fd)])) {
-			$serv->disconnect($fd, 1003, 'sys_error');
-			return $this->console->error('table设置失败，可能内存不足');
-		}
 	}
 	
 	/**
@@ -241,19 +252,7 @@ class WebSocket extends MessageHandler
 	 */
 	public function onShutdown(swoole_server $server)
 	{
-		$this->removeUkey();
-		co::sleep(2);
 		$this->process->write('exit');
-	}
-	
-	/**
-	 *移除本serv的ukey绑定
-	 */
-	private function removeUkey()
-	{
-		foreach ($this->table as $v) {
-			$this->redis->del($v['ukey']);//将ukey绑定用户删除
-		}
 	}
 	
 	/**
@@ -351,6 +350,8 @@ class WebSocket extends MessageHandler
 				}
 				
 				return $serv->push($fd, $messageSend->encode());//向fd发消息
+			} else {
+				return $this->unbindID($serv, $fd, $data->to_uid, $data->to_user_type);
 			}
 		} else {
 			$this->console->error('无效消息');
@@ -367,7 +368,7 @@ class WebSocket extends MessageHandler
 	 */
 	private function get_account_by_link($link)
 	{
-		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, 600)->find();
+		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, $this->cache_time)->find();
 		return $router ? $router['account_id'] : false;
 	}
 	
@@ -567,10 +568,14 @@ class WebSocket extends MessageHandler
 	 * 链接关闭
 	 * @param swoole_server $serv
 	 * @param               $fd
+	 * @return int
 	 */
 	public function onClose(swoole_server $serv, $fd)
 	{
 		$this->console->error('close' . $fd);
+		$user = $this->getLocalBindUID($serv, $fd);
+		$user = $this->explore_local_uid($user);
+		return $this->unbindID($serv, $fd, $user['user_id'], $user['user_type']);
 	}
 	
 	/**
@@ -723,6 +728,18 @@ class WebSocket extends MessageHandler
 						
 						case GatewayProtocols::CMD_ON_CONNECT_GATEWAY://网关连接成功
 							$this->initServKey();//找网关注册
+							break;
+						
+						case GatewayProtocols::CMD_TEST_FD_ONLINE://检测连接是否在线
+							$fd            = $data->fd;
+							$response      = new GatewayProtocols();
+							$response->cmd = GatewayProtocols::CMD_TEST_FD_ONLINE;
+							if ($serv->isEstablished($fd)) {
+								$response->data = 1;
+							} else {
+								$response->data = 1;
+							}
+							return $process->write($response->encode());
 							break;
 						default:
 							//其他类型消息一律分配worker处理
