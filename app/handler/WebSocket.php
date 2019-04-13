@@ -18,6 +18,7 @@ use im\core\connect\MysqlConnectPool;
 use im\core\connect\RedisConnectPool;
 use im\core\Container;
 use im\core\coroutine\CoMysql;
+use im\core\facade\Cache;
 use im\core\handler\MessageHandler;
 use im\core\redis\Redis;
 use im\core\service\protocols\GatewayProtocols;
@@ -51,6 +52,8 @@ class WebSocket extends MessageHandler
 	protected $users;
 	
 	protected $_uidConnections = [];//uid映射链接
+	
+	protected $cache_time      = 600;
 	
 	/**
 	 * TestHandler constructor.
@@ -126,7 +129,8 @@ class WebSocket extends MessageHandler
 			$chan_router->push($router);
 			$exis_relation = Db::name('account_user_relation')->where('account_id', $router['account_id'])
 				->where('user_id', $uid)
-				->field('account_id')->find();
+				->field('account_id')
+				->find();
 			if (!$exis_relation) {//不存在好友关系
 				Db::name('account_user_relation')->insert(
 					[
@@ -135,6 +139,7 @@ class WebSocket extends MessageHandler
 						'create_time' => time(),
 					]
 				);
+				Cache::clear($this->get_relation_cache_tag($router['account_id'], $uid));
 			}
 		});
 		
@@ -152,6 +157,7 @@ class WebSocket extends MessageHandler
 						'update_time' => time(),
 					]
 				);
+				Cache::clear($this->get_relation_cache_tag($router['account_id'], $uid));
 			}
 		});
 	}
@@ -316,6 +322,9 @@ class WebSocket extends MessageHandler
 	 * @param                         $src_worker_id
 	 * @param                         $data
 	 * @return bool
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
 	 */
 	public function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
 	{
@@ -331,6 +340,15 @@ class WebSocket extends MessageHandler
 				$messageSend->from_user_type = $data->from_user_type;
 				$messageSend->data           = $data->data;
 				$messageSend->time           = time();
+				
+				if ($data->from_user_type == '1') {
+					$relation                 = Db::name('account_user_relation')->where('account_id', $data->to_uid)
+						->where('user_id', $data->from_uid)
+						->field('need_notice')
+						->cache(true, $this->cache_time, $this->get_relation_cache_tag($data->to_uid, $data->from_uid))
+						->find();
+					$messageSend->need_notice = $relation ? $relation['need_notice'] : 1;
+				}
 				
 				return $serv->push($fd, $messageSend->encode());//向fd发消息
 			}
@@ -409,27 +427,29 @@ class WebSocket extends MessageHandler
 					//		}
 					return $this->sendToUID($uid, $to_uid, $to_user_type, $content, $fd);
 					break;
-				case 'list_item'://{"cmd":"list_item","uid":"1"}
+				case 'list_item'://商家收到消息但是列表项已被删除的情况，需要调这个接口拉列表项数据{"cmd":"list_item","uid":"1"}
 					$user = $this->explore_local_uid($uid);
 					if ($user['user_type'] <> '2') {
-						
 						return false;
 					}
-					$message_list  = Db::name('account_message_list')->where('account_id', $user['user_id'])
+					$message_list = Db::name('account_message_list')->where('account_id', $user['user_id'])
 						->where('user_id', $data['uid'])
 						->field('account_id,user_id,last_message_id,message_list_id,update_time')
-						->cache(true, 600)
+						->cache(true, $this->cache_time)
 						->find();
-					$user_relation = Db::name('account_user_relation')->field('user_remark,need_notice')->where('account_id', $user['user_id'])
-						->where('user_id', $data['uid'])->cache(true, 600)->find();
-					$user          = Db::name('user')->field('nickname')->where('user_id', $data['uid'])->cache(true, 600)->find();
-					$last_message  = Db::name('user_message')->field('content,from_uid,content_type')
-						->where('message_id', $message_list['last_message_id'])->cache(true, 600)->find();
+					if ($message_list) {
+						$user_relation = Db::name('account_user_relation')->field('user_remark,need_notice')->where('account_id', $user['user_id'])
+							->where('user_id', $data['uid'])->cache(true, $this->cache_time, $this->get_relation_cache_tag($user['user_id'], $data['uid']))->find();
+						$user          = Db::name('user')->field('nickname')->where('user_id', $data['uid'])->cache(true, $this->cache_time)->find();
+						$last_message  = Db::name('user_message')->field('content,from_uid,content_type')
+							->where('message_id', $message_list['last_message_id'])->cache(true, $this->cache_time)->find();
+						
+						$message_list['name']    = $user_relation['user_remark'] ?: $user['nickname'];
+						$message_list['message'] = $message_list['last_message_id'] ? $last_message : new \stdClass();
+						
+						return $this->result($serv, $fd, $message_list, 0, MessageSendProtocols::CMD_LIST_ITEM);
+					}
 					
-					$message_list['name']    = $user_relation['user_remark'] ?: $user['nickname'];
-					$message_list['message'] = $message_list['last_message_id'] ? $last_message : new \stdClass();
-					
-					return $this->result($serv, $fd, $message_list, 0, MessageSendProtocols::CMD_TIPS);
 					break;
 				case 'user_info'://{"cmd":"user_info","uid":"Tkzljq"}
 					$mine  = [];//自己的信息
@@ -438,15 +458,15 @@ class WebSocket extends MessageHandler
 					if ($uid['user_type'] == '2') {
 						//本机的用户类型为商家
 						$mine                 = Db::name('account')->field('show_name,head_img_url')->where('account_id', $uid['user_id'])
-							->cache(true, 600)->find();
+							->cache(true, $this->cache_time)->find();
 						$user                 = Db::name('user')->where('user_id', $data['uid'])->field('nickname,phone,user_id')->find();
 						$relation             = Db::name('account_user_relation')->where('account_id', $uid['user_id'])
 							->field('user_remark,need_notice')
 							->where('user_id', $data['uid'])
-							->cache(true, 600)
+							->cache(true, $this->cache_time, $this->get_relation_cache_tag($uid['user_id'], $data['uid']))
 							->find();
 						$their['name']        = $relation['user_remark'] ?: $user['nickname'];
-						$their['need_notice'] = $user['need_notice'];
+						$their['need_notice'] = $relation['need_notice'];
 						$their['phone']       = substr($user['phone'], 1, 3) . '***';
 						$their['user_id']     = $user['user_id'];
 					} else {
@@ -454,9 +474,9 @@ class WebSocket extends MessageHandler
 						$mine = Db::name('user')->where('user_id', $uid['user_id'])->field('nickname,phone,user_id')->find();
 						
 						$router                = Db::name('router')->field('show_name,account_id,short_url')->where('short_url', $data['uid'])
-							->cache(true, 600)->find();
+							->cache(true, $this->cache_time)->find();
 						$account               = Db::name('account')->field('show_name,head_img_url')->where('account_id', $router['account_id'])
-							->cache(true, 600)->find();
+							->cache(true, $this->cache_time)->find();
 						$their['show_name']    = $router['show_name'] ?: $account['show_name'];
 						$their['head_img_url'] = $account['head_img_url'];
 					}
@@ -483,17 +503,17 @@ class WebSocket extends MessageHandler
 					$where['from_uid']       = $user_id;
 					$where['from_user_type'] = $utype;
 					$where['to_uid']         = $search_uid;
-					$where['to_user_type']   = $utype == 1 ? 2 : 1;
+					$where['to_user_type']   = $utype == '1' ? '2' : '1';
 					
 					$whereOr                   = new Where();//他接收的
 					$whereOr['to_uid']         = $user_id;
 					$whereOr['to_user_type']   = $utype;
 					$whereOr['from_uid']       = $search_uid;
-					$whereOr['from_user_type'] = $utype == 1 ? 2 : 1;
+					$whereOr['from_user_type'] = $utype == '1' ? '2' : '1';
 					
 					$chan_message = new \Chan(1);
 					go(function () use ($where, $whereOr, $page, $chan_message) {
-						$message = Db::name('user_message')->where($where)->whereOr($whereOr)
+						$message = Db::name('user_message')->where($where->enclose())->whereOr($whereOr->enclose())
 							->field('from_uid,from_user_type,to_uid,to_user_type,content,content_type,create_time')
 							->order('create_time desc')
 							->paginate(20, false, ['page' => $page]);
@@ -508,6 +528,36 @@ class WebSocket extends MessageHandler
 						return $this->result($serv, $fd, $message->toArray(), 0, MessageSendProtocols::CMD_MESSAGE_LIST, 'success', $account_head_img['head_img_url']);
 					});
 					
+					break;
+				case 'set_user'://商家设置用户{"cmd":"set_user","uid":"1","need_notice":"1","user_remark":"test"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2') {
+						return false;
+					}
+					$update = [];
+					if (isset($data['need_notice']) && in_array($data['need_notice'], ['1', '0'])) {
+						$update['need_notice'] = $data['need_notice'];
+					}
+					if (isset($data['user_remark'])) {
+						$update['user_remark'] = $data['user_remark'];
+					}
+					if (count($update) > 0) {
+						Cache::clear($this->get_relation_cache_tag($user['user_id'], $data['uid']));
+						Db::name('account_user_relation')->where('account_id', $user['user_id'])
+							->where('user_id', $data['uid'])->update($update);
+					}
+					
+					break;
+				case 'delete_list_item'://{"cmd":"delete_list_item","message_list_id":"1"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2') {
+						return false;
+					}
+					$message_list_id = $data['message_list_id'];
+					Db::name('account_message_list')
+						->where('account_id', $user['user_id'])
+						->where('message_list_id', $message_list_id)
+						->update(['is_delete' => 1]);
 					break;
 			}
 		}
@@ -725,16 +775,28 @@ class WebSocket extends MessageHandler
 				$chan_id->push($insertId);
 			}
 		});
-		go(function () use ($utype, $user_id, $to_uid, $to_user_type, $chan_id, $from_uid) {
+		go(function () use ($utype, $user_id, $to_uid, $to_user_type, $chan_id) {
 			if ($msg_id = $chan_id->pop(100)) {
 				$account_id            = $utype == 2 ? $user_id : $to_uid;
 				$user_id               = $to_user_type == 1 ? $to_uid : $user_id;
 				$update['update_time'] = time();
-				if ($from_uid == '1') {//买家发的
+				if ($utype == '1') {//买家发的
 					$update['last_message_id'] = $msg_id;
 				}
+				$update['is_delete'] = 0;
 				Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update($update);
 			}
 		});
+	}
+	
+	/**
+	 * 商家与用户relation的缓存tag
+	 * @param $account_id
+	 * @param $user_id
+	 * @return string
+	 */
+	private function get_relation_cache_tag($account_id, $user_id)
+	{
+		return md5($account_id . "_" . $user_id);
 	}
 }

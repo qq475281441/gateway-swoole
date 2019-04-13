@@ -2115,7 +2115,11 @@ abstract class Connection
 	 */
 	protected function cacheData($key, $data, $config = [])
 	{
-		$this->cache->set($key, $data, $config['expire']);
+		if (isset($config['tag'])) {
+			$this->cache->tag($config['tag'])->set($key, $data, $config['expire']);
+		} else {
+			$this->cache->set($key, $data, $config['expire']);
+		}
 	}
 	
 	/**

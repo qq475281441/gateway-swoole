@@ -25,10 +25,18 @@ class Redis
 			'prefix'   => 'mula_'
 		];
 	
+	/**
+	 * @var \Redis
+	 */
 	protected $handler = null;//redis句柄
 	
 	protected $tag     = null;//tag
 	
+	/**
+	 * Redis constructor.
+	 * @param array $options
+	 * @throws \Exception
+	 */
 	public function __construct($options = [])
 	{
 		$config        = Container::get('config');
@@ -36,17 +44,13 @@ class Redis
 		if (!empty($options)) {
 			$this->options = array_merge($this->options, $options);
 		}
-		if (extension_loaded('redis')) {
-			$this->handler = new \Redis();
-			$this->handler->connect($this->options['host'], $this->options['port'], $this->options['timeout']);
-			if ('' != $this->options['password']) {
-				$this->handler->auth($this->options['password']);
-			}
-			if ('' != $this->options['select']) {
-				$this->handler->select($this->options['select']);
-			}
-		} else {
-			throw new \Exception('extension :redis is not install');
+		
+		$this->handler = new \im\core\redis\Redis();
+		if ('' != $this->options['password']) {
+			$this->handler->auth($this->options['password']);
+		}
+		if ('' != $this->options['select']) {
+			$this->handler->select($this->options['select']);
 		}
 	}
 	

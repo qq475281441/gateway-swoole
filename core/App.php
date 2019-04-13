@@ -61,7 +61,7 @@ class App extends Container
 			}
 		}
 		Db::setConfig($this->config->get('mysql')['main']);//默认载入主库
-		Db::setCacheHandler(Container::get(Cache::class));
+		Db::setCacheHandler(Cache::getInstance());
 		//		Runtime::enableCoroutine(true);//一键协程
 		include CORE . 'helper' . DIRECTORY_SEPARATOR . 'common.php';//加载公共函数
 	}
