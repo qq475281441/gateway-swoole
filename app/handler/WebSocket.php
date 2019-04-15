@@ -404,7 +404,8 @@ class WebSocket extends MessageHandler
 		$data = json_decode($frame->data, true);
 		$uid  = $this->getLocalBindUID($serv, $fd);
 		if ($frame->data == 'ping') {
-			$serv->push($fd, '', 0xA);
+			$user_id = $this->explore_local_uid($uid)['user_id'];
+			$this->redis->set($this->auth->get_ping_key($user_id), time(), 15);
 			return $serv->push($fd, 'pong');
 		} else {
 			switch ($data['cmd']) {
@@ -570,8 +571,13 @@ class WebSocket extends MessageHandler
 						->where('message_list_id', $message_list_id)
 						->update(['is_delete' => 1]);
 					break;
-				case '':
-					
+				case 'read_msg'://{"cmd":"read_msg","message_id":"1"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2' || !check_num($data['message_id'])) {
+						return false;
+					}
+					$msg_id = $data['message_id'];
+					$this->redis->sAdd($this->auth->get_readed_list_key(), $user['user_id'] . '_' . $msg_id);
 					break;
 			}
 		}
@@ -761,7 +767,8 @@ class WebSocket extends MessageHandler
 			if ($to_user_type == '2') {
 				//发给商家
 				if ($msg = $message_chan->pop(100)) {
-					$this->redis->sAdd($this->get_list_key(), $msg->encode());
+					$this->redis->sAdd($this->auth->get_unread_list_key(), $msg->to_uid . '_' . $msg->message_id);
+					$this->redis->set($this->auth->get_msg_detail_key($msg->message_id), $msg->encode());
 					$message_chan->close();
 				}
 			}
@@ -836,14 +843,5 @@ class WebSocket extends MessageHandler
 		}
 		
 		return array_unique($return);
-	}
-	
-	/**
-	 * 消息队列key
-	 * @return string
-	 */
-	private function get_list_key()
-	{
-		return md5('unread_message');
 	}
 }

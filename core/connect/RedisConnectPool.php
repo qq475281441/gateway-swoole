@@ -13,7 +13,7 @@ use im\core\Container;
 
 class RedisConnectPool
 {
-	protected     $num         = 5;
+	protected     $num         = 10;
 	
 	protected     $redisConfig = [];
 	

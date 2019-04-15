@@ -10,6 +10,8 @@ namespace app\handler;
 
 use app\auth\Auth;
 use app\model\Users;
+use app\protocols\MessageSendProtocols;
+use http\Message;
 use im\core\connect\RedisConnectPool;
 use im\core\Console;
 use im\core\handler\MessageHandler;
@@ -21,7 +23,7 @@ use swoole_server;
 
 class GatewayHandler extends MessageHandler
 {
-	protected $count           = 0;
+	protected $count = 0;
 	
 	protected $servs;
 	
@@ -29,6 +31,9 @@ class GatewayHandler extends MessageHandler
 	
 	protected $auth;
 	
+	/**
+	 * @var \Redis
+	 */
 	protected $redis;
 	
 	protected $table;
@@ -52,9 +57,40 @@ class GatewayHandler extends MessageHandler
 		$this->console    = new Console();
 	}
 	
+	/**
+	 * @param swoole_server $serv
+	 */
+	public function onStart(swoole_server $serv)
+	{
+	}
+	
 	public function onWorkerStart(swoole_server $serv, $worker_id)
 	{
 		RedisConnectPool::getInstance()->init();
+		if (!$serv->taskworker && $worker_id == 1) {
+			swoole_timer_tick(2000, function () use ($serv) {
+				$unread = $this->redis->sDiff($this->auth->get_unread_list_key(), $this->auth->get_readed_list_key());
+				foreach ($unread as $k => $v) {
+					$message_id = explode('_', $v);
+					$account_id = $message_id[0];
+					$msg_detail = $this->redis->get($this->auth->get_msg_detail_key($message_id[1]));
+					if ($msg_detail <> false && $msg_detail <> '') {
+						$messageObj = (new GatewayProtocols())->decode($msg_detail);
+						if ($messageObj->to_uid && $messageObj->to_uid == $account_id && $this->redis->get($this->auth->get_ping_key($messageObj->to_uid))) {
+							$this->send_to_uid($serv, $messageObj, false);
+						} else {
+							continue;
+						}
+					} else {
+						continue;
+					}
+				}
+				$read_ids = $this->redis->sMembers($this->auth->get_readed_list_key());
+				foreach ($read_ids as $k => $v) {
+					$this->redis->sRem($this->auth->get_unread_list_key(), $v);
+				}
+			});
+		}
 	}
 	
 	/**
@@ -112,7 +148,7 @@ class GatewayHandler extends MessageHandler
 					$lock     = new swoole_lock(SWOOLE_MUTEX);//加锁
 					if ($lock->lockwait(1)) {
 						$user_info = $this->user_table->get($uid);
-						if ($user_info && $user_info <> '') {
+						if ($user_info && $user_info <> '' && $user_info['data']) {
 							$user_info = json_decode($user_info['data'], true);
 							foreach ($user_info as $k => $v) {
 								if ($v['serv_key'] == $serv_key && $v['fd'] == $user_fd) {
@@ -126,45 +162,55 @@ class GatewayHandler extends MessageHandler
 					
 					break;
 				case  GatewayProtocols::CMD_SEND_TO_UID://往uid发消息
-					$recv_fds   = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
-					$sender_fds = $this->user_table->get($data->from_user_type . '_' . $data->from_uid);
-					$sender_fd  = $data->fd;
-					if ($recv_fds && $recv_fds <> '' && isset($recv_fds['data'])) {
-						$recv_fds = json_decode($recv_fds['data'], true);//该用户绑定的fd
-						if (!$recv_fds) {
-							return false;
-						}
-						foreach ($recv_fds as $k => $v) {
-							$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
-							$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
-							$data->fd  = $v['fd'];//需要接受消息的fd
-							if ($serv->exist($serv_fd['fd'])) {
-								$serv->send($serv_fd['fd'], $data->encode());
-							}
-						}
-					}
-					if ($sender_fds && $sender_fds <> '' && isset($sender_fds['data'])) {
-						$sender_fds = json_decode($sender_fds['data'], true);//该用户绑定的fd
-						if (!$sender_fds) {
-							return false;
-						}
-						foreach ($sender_fds as $k => $v) {
-							if ($v['fd'] == $sender_fd) {//不发送给当前这个客户端，其他fd均发送
-								continue;
-							}
-							$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
-							$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
-							$data->fd  = $v['fd'];//需要接受消息的fd
-							if ($serv->exist($serv_fd['fd'])) {
-								$serv->send($serv_fd['fd'], $data->encode());
-							}
-						}
-					}
+					$this->send_to_uid($serv, $data);
 					break;
 			}
 		}
 	}
 	
+	/**
+	 * 给uid发消息
+	 * @param swoole_server $serv
+	 * @param               $data
+	 * @return bool
+	 */
+	private function send_to_uid(swoole_server $serv, $data, $need_to_sender = true)
+	{
+		$recv_fds   = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
+		$sender_fds = $this->user_table->get($data->from_user_type . '_' . $data->from_uid);
+		$sender_fd  = $data->fd;
+		if ($recv_fds && $recv_fds <> '' && isset($recv_fds['data'])) {
+			$recv_fds = json_decode($recv_fds['data'], true);//该用户绑定的fd
+			if (!$recv_fds) {
+				return false;
+			}
+			foreach ($recv_fds as $k => $v) {
+				$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
+				$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
+				$data->fd  = $v['fd'];//需要接受消息的fd
+				if ($serv->exist($serv_fd['fd'])) {
+					$serv->send($serv_fd['fd'], $data->encode());
+				}
+			}
+		}
+		if ($need_to_sender === true && $sender_fds && $sender_fds <> '' && isset($sender_fds['data'])) {
+			$sender_fds = json_decode($sender_fds['data'], true);//该用户绑定的fd
+			if (!$sender_fds) {
+				return false;
+			}
+			foreach ($sender_fds as $k => $v) {
+				if ($v['fd'] == $sender_fd) {//不发送给当前这个客户端，其他fd均发送
+					continue;
+				}
+				$serv_fd   = $this->table->get($v['serv_key']);//子服务的fd
+				$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
+				$data->fd  = $v['fd'];//需要接受消息的fd
+				if ($serv->exist($serv_fd['fd'])) {
+					$serv->send($serv_fd['fd'], $data->encode());
+				}
+			}
+		}
+	}
 	/**
 	 * 连接事件
 	 * @param swoole_server $serv

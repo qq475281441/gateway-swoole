@@ -48,3 +48,16 @@ if (!function_exists('BinToStr')) {
 		return join('', $arr);
 	}
 }
+
+/**
+ * 检测正整数
+ */
+if (!function_exists('check_num')) {
+	function check_num($num)
+	{
+		if (!is_numeric($num) || strpos($num, ".") !== false) {
+			return false;
+		}
+		return true;
+	}
+}

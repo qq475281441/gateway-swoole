@@ -79,15 +79,6 @@ class Auth
 		return false;
 	}
 	
-	/**
-	 * 用户ukey生成算法
-	 * @param $fd
-	 * @return string
-	 */
-	public function getUkey($fd)
-	{
-		return 'ukey_' . md5('imfd-bind' . $fd . uniqid());
-	}
 	
 	/**
 	 * roomkey生成算法
@@ -109,12 +100,41 @@ class Auth
 	}
 	
 	/**
-	 * 获取商户key
-	 * @param $account_id
+	 * 未读消息队列key
 	 * @return string
 	 */
-	public function getAccountKey($account_id)
+	public function get_unread_list_key()
 	{
-		return md5('last_ping_time' . $account_id);
+		return md5('unread_message');
 	}
+	
+	/**
+	 * 已读消息队列key
+	 * @return string
+	 */
+	public function get_readed_list_key()
+	{
+		return md5('readed_message');
+	}
+	
+	/**
+	 * 消息详情key
+	 * @param $msg_id
+	 * @return string
+	 */
+	public function get_msg_detail_key($msg_id)
+	{
+		return md5('msg_detail_' . $msg_id);
+	}
+	
+	/**
+	 * 心跳key
+	 * @param $user_id
+	 * @return string
+	 */
+	public function get_ping_key($user_id)
+	{
+		return md5('_ping_key_' . $user_id);
+	}
+	
 }
