@@ -573,11 +573,75 @@ class WebSocket extends MessageHandler
 					break;
 				case 'read_msg'://{"cmd":"read_msg","message_id":"1"}
 					$user = $this->explore_local_uid($uid);
-					if ($user['user_type'] <> '2' || !check_num($data['message_id'])) {
+					if ($user['user_type'] <> '2' || !isset($data['message_id']) || !check_num($data['message_id'])) {
 						return false;
 					}
 					$msg_id = $data['message_id'];
 					$this->redis->sAdd($this->auth->get_readed_list_key(), $user['user_id'] . '_' . $msg_id);
+					break;
+				case 'add_common_message'://{"cmd":"add_common_message","content":"666"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2' || !isset($data['content']) || mb_strlen($data['content']) > 200) {
+						return false;
+					}
+					$count = Db::name('account_common_message')
+						->cache(true, $this->cache_time, $this->get_common_message_cache_tag($user['user_id']))
+						->count('common_message_id');
+					if ($count >= 50) {
+						return false;
+					}
+					$last   = Db::name('account_common_message')->field('sort')
+						->where('account_id', $user['user_id'])
+						->cache(true, $this->cache_time, $this->get_common_message_cache_tag($user['user_id']))
+						->order('sort desc')->order('update_time desc')->find();
+					$insert = [
+						'content'     => $data['content'],
+						'account_id'  => $user['user_id'],
+						'update_time' => time(),
+						'sort'        => $last ? $last['sort'] + 50 : 50,
+					];
+					Db::name('account_common_message')->insert($insert);
+					Cache::clear($this->get_common_message_cache_tag($user['user_id']));
+					break;
+				case 'common_message_list'://{"cmd":"common_message_list"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2') {
+						return false;
+					}
+					$data = Db::name('account_common_message')->field('common_message_id,account_id,sort,update_time,content')
+						->where('account_id', $user['user_id'])
+						->cache(true, $this->cache_time, $this->get_common_message_cache_tag($user['user_id']))
+						->order('sort desc')->order('update_time desc')
+						->select();
+					return $this->result($serv, $fd, $data, 0, MessageSendProtocols::CMD_COMMON_MESSAGE_LIST);
+					break;
+				case 'edit_common_message'://{"cmd":"edit_common_message","content":"777","sort":"1000","common_message_id":"10"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2' || !isset($data['common_message_id']) || !check_num($data['common_message_id'])) {
+						return false;
+					}
+					$update['update_time'] = time();
+					if (isset($data['content'])) {
+						$update['content'] = $data['content'];
+					}
+					
+					if (isset($data['sort']) && check_num($data['sort'])) {
+						$update['sort'] = $data['sort'];
+					}
+					Db::name('account_common_message')->where('common_message_id', $data['common_message_id'])
+						->where('account_id', $user['user_id'])
+						->update($update);
+					Cache::clear($this->get_common_message_cache_tag($user['user_id']));
+					break;
+				
+				case 'del_common_message'://{"cmd":"del_common_message","common_message_id":"10"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '2' || !isset($data['common_message_id']) || !check_num($data['common_message_id'])) {
+						return false;
+					}
+					Db::name('account_common_message')->where('common_message_id', $data['common_message_id'])
+						->where('account_id', $user['user_id'])->delete();
+					Cache::clear($this->get_common_message_cache_tag($user['user_id']));
 					break;
 			}
 		}
@@ -784,6 +848,17 @@ class WebSocket extends MessageHandler
 	private function get_relation_cache_tag($account_id, $user_id)
 	{
 		return md5($account_id . "_" . $user_id);
+	}
+	
+	/**
+	 * get_common_message_cache_tag
+	 * @param $account_id
+	 * @param $user_id
+	 * @return string
+	 */
+	private function get_common_message_cache_tag($account_id)
+	{
+		return md5('get_common_message_cache_tag' . $account_id);
 	}
 	
 	/**
