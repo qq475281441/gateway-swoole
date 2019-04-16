@@ -401,8 +401,7 @@ class WebSocket extends MessageHandler
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	private
-	function get_account_by_link($link)
+	private function get_account_by_link($link)
 	{
 		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, $this->cache_time)->find();
 		return $router ? $router['account_id'] : false;
