@@ -23,6 +23,7 @@ class MessageSendProtocols
 	const CMD_COMMON_MESSAGE_LIST = 6;//common_message_list
 	const CONTENT_TYPE_TEXT       = 1;//content-type text
 	const CONTENT_TYPE_IMAGES     = 2;//content-type images
+	const CONTENT_TYPE_AUTO_REPLY = 3;//content-type AUTO_REPLY
 	
 	public $cmd;
 	

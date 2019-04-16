@@ -103,7 +103,9 @@ class WebSocket extends MessageHandler
 			//验证通过,在网关绑定uid
 			$this->bindID($serv, $request->fd, $uid, $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT);
 			if ($_GET['type'] == 'user') {
+				//发送商家自动消息
 				$this->bind_account($uid, $_GET['link']);
+				$this->send_account_auto_reply($_GET['link'], $request->fd, $uid);
 			}
 			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'login_success');
 		} else {
@@ -111,6 +113,28 @@ class WebSocket extends MessageHandler
 			co::sleep(100);
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
 		}
+	}
+	
+	/**
+	 * @param                         $link
+	 * @param                         $fd
+	 */
+	private function send_account_auto_reply($link, $fd, $uid)
+	{
+		$chan_router = new \Chan(1);
+		go(function () use ($link, $chan_router) {
+			$router = Db::name('router')->where('short_url', $link)->field('account_id')
+				->cache(true, $this->cache_time)->find();
+			$chan_router->push($router);
+		});
+		
+		go(function () use ($uid, $chan_router, $fd) {
+			if ($account_id = $chan_router->pop(100)) {
+				$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
+					->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
+				$this->sendToUID('2_' . $account_id['account_id'], $uid, 1, ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY], $fd);
+			}
+		});
 	}
 	
 	/**
@@ -122,7 +146,8 @@ class WebSocket extends MessageHandler
 	{
 		$chan_router = new \Chan(1);
 		go(function () use ($uid, $link, $chan_router) {
-			$router = Db::name('router')->where('short_url', $link)->field('account_id')->cache(true, 600)->find();
+			$router = Db::name('router')->where('short_url', $link)->field('account_id')
+				->cache(true, $this->cache_time)->find();
 			$chan_router->push($router);
 		});
 		
@@ -231,7 +256,8 @@ class WebSocket extends MessageHandler
 	 * @param               $fd
 	 * @return
 	 */
-	public function onConnect(swoole_server $serv, $fd)
+	public
+	function onConnect(swoole_server $serv, $fd)
 	{
 		$this->console->success('connect' . $fd);
 		$cli_info    = $serv->getClientInfo($fd);
@@ -254,7 +280,8 @@ class WebSocket extends MessageHandler
 	 * SIGTREM信号关闭事件
 	 * @param swoole_server $server
 	 */
-	public function onShutdown(swoole_server $server)
+	public
+	function onShutdown(swoole_server $server)
 	{
 		$this->process->write('exit');
 	}
@@ -278,7 +305,8 @@ class WebSocket extends MessageHandler
 	 *
 	 * @param swoole_server $serv
 	 */
-	public function onStart(swoole_server $serv)
+	public
+	function onStart(swoole_server $serv)
 	{
 		$this->holdPing();//维持心跳
 		$this->processEvent($serv, $this->process);//子进程消息监听处理
@@ -297,7 +325,8 @@ class WebSocket extends MessageHandler
 	 * @param swoole_server $serv
 	 * @param               $worker_id
 	 */
-	public function onWorkerStart(\swoole_server $serv, $worker_id)
+	public
+	function onWorkerStart(\swoole_server $serv, $worker_id)
 	{
 		RedisConnectPool::getInstance()->init();
 		if ($serv->taskworker === true) {// 表示当前的进程是Task工作进程
@@ -310,7 +339,8 @@ class WebSocket extends MessageHandler
 	/**
 	 *维持子进程的心跳
 	 */
-	private function holdPing()
+	private
+	function holdPing()
 	{
 		swoole_timer_tick(7000, function () {//让子进程维持和网关的心跳
 			$body      = new GatewayProtocols();
@@ -329,7 +359,8 @@ class WebSocket extends MessageHandler
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	public function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
+	public
+	function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
 	{
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
@@ -370,7 +401,8 @@ class WebSocket extends MessageHandler
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	private function get_account_by_link($link)
+	private
+	function get_account_by_link($link)
 	{
 		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, $this->cache_time)->find();
 		return $router ? $router['account_id'] : false;
@@ -381,7 +413,8 @@ class WebSocket extends MessageHandler
 	 * @param $uid
 	 * @return array
 	 */
-	private function explore_local_uid($uid)
+	private
+	function explore_local_uid($uid)
 	{
 		$uid_array = explode('_', $uid);//2_16
 		return ['user_type' => $uid_array[0], 'user_id' => $uid_array[1]];
@@ -393,7 +426,8 @@ class WebSocket extends MessageHandler
 	 * @return bool|void
 	 * @throws \Exception
 	 */
-	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
+	public
+	function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
 		if ($frame->opcode == 0x08) {//客户端发送关闭帧
 			$code   = $frame->code;

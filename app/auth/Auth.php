@@ -96,7 +96,7 @@ class Auth
 	 */
 	public function getServerKey()
 	{
-		return md5(uniqid());
+		return uniqid();
 	}
 	
 	/**
