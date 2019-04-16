@@ -47,6 +47,8 @@ class MessageSendProtocols
 	
 	public $message_id;
 	
+	public $from_name;
+	
 	/**
 	 * 将要发的数据编码
 	 * @return false|string
@@ -65,6 +67,7 @@ class MessageSendProtocols
 			'time'           => $this->time,
 			'need_notice'    => $this->need_notice,
 			'message_id'     => $this->message_id,
+			'from_name'      => $this->from_name,
 		];
 		$str  = json_encode($data);
 		return $str;
@@ -88,6 +91,7 @@ class MessageSendProtocols
 		$this->time           = isset($data['time']) ? $data['time'] : '';
 		$this->need_notice    = isset($data['need_notice']) ? $data['need_notice'] : 1;
 		$this->message_id     = isset($data['message_id']) ? $data['message_id'] : '';
+		$this->from_name      = isset($data['from_name']) ? $data['from_name'] : '';
 		
 		$this->data  = isset($data['data']) ? $data['data'] : '';
 		$this->extra = isset($data['extra']) ? $data['extra'] : '';

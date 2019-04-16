@@ -359,8 +359,7 @@ class WebSocket extends MessageHandler
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	public
-	function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
+	public function onPipeMessage(swoole_websocket_server $serv, $src_worker_id, $data)
 	{
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
@@ -374,6 +373,7 @@ class WebSocket extends MessageHandler
 				$messageSend->from_user_type = $data->from_user_type;
 				$messageSend->data           = $data->data;
 				$messageSend->message_id     = $data->message_id;
+				$messageSend->from_name      = $data->extra;
 				$messageSend->time           = time();
 				if ($data->from_user_type == '1') {
 					$relation                 = Db::name('account_user_relation')->where('account_id', $data->to_uid)
@@ -537,12 +537,16 @@ class WebSocket extends MessageHandler
 					$user_id   = $uid_array[1];
 					
 					$search_uid = $data['uid'];
+					
 					if ($utype == '1') {
 						//将店铺链接转为account_id
 						$search_uid = $this->get_account_by_link($search_uid);
 						if (!$search_uid) {
 							return $this->result($serv, $fd, 'uid错误', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'uid_error');
 						}
+						$content_type = [1, 2, 3];//买家要显示3
+					} else {
+						$content_type = [1, 2];
 					}
 					
 					$where                   = new Where();//他发的
@@ -558,8 +562,11 @@ class WebSocket extends MessageHandler
 					$whereOr['from_user_type'] = $utype == '1' ? '2' : '1';
 					
 					$chan_message = new \Chan(1);
-					go(function () use ($where, $whereOr, $page, $chan_message) {
-						$message = Db::name('user_message')->where($where->enclose())->whereOr($whereOr->enclose())
+					go(function () use ($where, $whereOr, $page, $chan_message, $content_type) {
+						$message = Db::name('user_message')
+							->where($where->enclose())
+							->whereOr($whereOr->enclose())
+							->where('content_type', 'in', $content_type)
 							->field('from_uid,from_user_type,to_uid,to_user_type,content,content_type,create_time')
 							->order('create_time desc')
 							->paginate(20, false, ['page' => $page]);
@@ -632,7 +639,7 @@ class WebSocket extends MessageHandler
 						'content'     => $data['content'],
 						'account_id'  => $user['user_id'],
 						'update_time' => time(),
-						'sort'        => $last ? $last['sort'] + 50 : 50,
+						'sort'        => $last ? $last['sort'] + 5000 : 5000,
 					];
 					Db::name('account_common_message')->insert($insert);
 					Cache::clear($this->get_common_message_cache_tag($user['user_id']));
@@ -802,8 +809,13 @@ class WebSocket extends MessageHandler
 	 * 给用户发消息
 	 * @param $from_uid
 	 * @param $to_uid
+	 * @param $to_user_type
 	 * @param $content
-	 * @return bool
+	 * @param $fd
+	 * @return void
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
 	 */
 	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content, $fd)
 	{
@@ -819,6 +831,10 @@ class WebSocket extends MessageHandler
 		$request->to_user_type   = $to_user_type;
 		$request->data           = $content;
 		$request->fd             = $fd;
+		
+		if ($utype == '1') {
+			$request->extra = $this->get_username($user_id, $to_uid);
+		}
 		
 		$chan_id = new \Chan(1);
 		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type, $chan_id) {
@@ -861,9 +877,9 @@ class WebSocket extends MessageHandler
 			}
 		});
 		
-		go(function () use ($to_user_type, $message_chan) {
-			if ($to_user_type == '2') {
-				//发给商家
+		go(function () use ($to_user_type, $message_chan, $content) {
+			if ($to_user_type == '2' && $content['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY) {
+				//发给商家,排除自动回复消息
 				if ($msg = $message_chan->pop(100)) {
 					$this->redis->sAdd($this->auth->get_unread_list_key(), $msg->to_uid . '_' . $msg->message_id);
 					$this->redis->set($this->auth->get_msg_detail_key($msg->message_id), $msg->encode());
@@ -871,6 +887,32 @@ class WebSocket extends MessageHandler
 				}
 			}
 		});
+	}
+	
+	/**
+	 * 获取用户的备注或昵称
+	 * @param $uid
+	 * @param $account_id
+	 * @return mixed
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
+	 */
+	private function get_username($uid, $account_id)
+	{
+		$data = Db::name('account_user_relation')->where('account_id', $account_id)
+			->where('user_id', $uid)
+			->field('user_remark')
+			->cache(true, $this->cache_time, $this->get_relation_cache_tag($account_id, $uid))
+			->find();
+		if ($data && $data['user_remark']) {
+			return $data['user_remark'];
+		} else {
+			$user = Db::name('user')->field('nickname')->where('user_id', $uid)
+				->cache(true, $this->cache_time, $this->get_relation_cache_tag($account_id, $uid))
+				->find();
+			return $user['nickname'];
+		}
 	}
 	
 	/**
