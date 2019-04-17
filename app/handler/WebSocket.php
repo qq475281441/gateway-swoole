@@ -578,7 +578,7 @@ class WebSocket extends MessageHandler
 						$their['user_remark'] = $relation['user_remark'];
 						$their['nickname']    = $user['nickname'];
 						$their['need_notice'] = $relation['need_notice'];
-						$their['phone']       = substr($user['phone'], 1, 3) . '***';
+						$their['phone']       = mb_substr($user['phone'], 0, 3) . '******' . mb_substr($user['phone'], -3);
 						$their['user_id']     = $user['user_id'];
 					} else {
 						//本机的用户类型为买家
