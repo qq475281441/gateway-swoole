@@ -14,6 +14,7 @@ use app\model\Users;
 use app\protocols\MessageSendProtocols;
 use app\service\Gateway;
 use Co;
+use http\Message;
 use im\core\connect\MysqlConnectPool;
 use im\core\connect\RedisConnectPool;
 use im\core\Container;
@@ -133,6 +134,36 @@ class WebSocket extends MessageHandler
 				$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
 					->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
 				$this->sendToUID('2_' . $account_id['account_id'], $uid, 1, ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY], $fd);
+			}
+		});
+	}
+	
+	/**
+	 * 商家的自动回复菜单
+	 * @param $auto_menu_id
+	 * @param $fd
+	 * @param $uid
+	 */
+	private function send_account_auto_menu_reply($auto_menu_id, $fd, $uid)
+	{
+		$chan_auto_menu = new \Chan(1);
+		go(function () use ($auto_menu_id, $chan_auto_menu) {
+			$data = Db::name('account_auto_menu')->where('auto_menu_id', $auto_menu_id)
+				->field('account_id,answer')
+				->cache(md5('auto_menu_id' . $auto_menu_id), $this->cache_time)
+				->find();
+			if ($data) {
+				$chan_auto_menu->push($data);
+			}
+		});
+		
+		go(function () use ($uid, $chan_auto_menu, $fd) {
+			if ($auto_menu = $chan_auto_menu->pop(100)) {
+				$this->sendToUID('2_' . $auto_menu['account_id'], $uid, 1,
+				                 [
+					                 'content'      => $auto_menu['answer'],
+					                 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
+				                 ], $fd);
 			}
 		});
 	}
@@ -510,7 +541,8 @@ class WebSocket extends MessageHandler
 							->where('user_id', $data['uid'])
 							->cache(true, $this->cache_time, $this->get_relation_cache_tag($uid['user_id'], $data['uid']))
 							->find();
-						$their['name']        = $relation['user_remark'] ?: $user['nickname'];
+						$their['user_remark'] = $relation['user_remark'];
+						$their['nickname']    = $user['nickname'];
 						$their['need_notice'] = $relation['need_notice'];
 						$their['phone']       = substr($user['phone'], 1, 3) . '***';
 						$their['user_id']     = $user['user_id'];
@@ -683,6 +715,13 @@ class WebSocket extends MessageHandler
 						->where('account_id', $user['user_id'])->delete();
 					Cache::clear($this->get_common_message_cache_tag($user['user_id']));
 					break;
+				case 'get_answer'://{"cmd":"get_answer","auto_menu_id":"1"}
+					$user = $this->explore_local_uid($uid);
+					if ($user['user_type'] <> '1' || !isset($data['auto_menu_id']) || !check_num($data['auto_menu_id'])) {
+						return false;
+					}
+					return $this->send_account_auto_menu_reply($data['auto_menu_id'], $fd, $user['user_id']);
+					break;
 			}
 		}
 	}
@@ -834,7 +873,9 @@ class WebSocket extends MessageHandler
 		if ($utype == '1') {
 			$request->extra = $this->get_username($user_id, $to_uid);
 		}
-		
+		if (mb_strlen($content['content']) < 1) {
+			return false;
+		}
 		$chan_id = new \Chan(1);
 		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type, $chan_id) {
 			$insertId = Db::name('user_message')->insertGetId(
@@ -877,7 +918,10 @@ class WebSocket extends MessageHandler
 		});
 		
 		go(function () use ($to_user_type, $message_chan, $content) {
-			if ($to_user_type == '2' && $content['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY) {
+			if ($to_user_type == '2'
+				&& $content['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY
+				&& $content['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
+			) {
 				//发给商家,排除自动回复消息
 				if ($msg = $message_chan->pop(100)) {
 					$this->redis->sAdd($this->auth->get_unread_list_key(), $msg->to_uid . '_' . $msg->message_id);

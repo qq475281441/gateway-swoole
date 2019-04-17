@@ -15,15 +15,16 @@ namespace app\protocols;
  */
 class MessageSendProtocols
 {
-	const CMD_SEND_MESSAGE        = 1;//消息发送
-	const CMD_TIPS                = 2;//系统提示
-	const CMD_MESSAGE_LIST        = 3;//消息列表
-	const CMD_USERINFO            = 4;//详情接口
-	const CMD_LIST_ITEM           = 5;//list_item
-	const CMD_COMMON_MESSAGE_LIST = 6;//common_message_list
-	const CONTENT_TYPE_TEXT       = 1;//content-type text
-	const CONTENT_TYPE_IMAGES     = 2;//content-type images
-	const CONTENT_TYPE_AUTO_REPLY = 3;//content-type AUTO_REPLY
+	const CMD_SEND_MESSAGE             = 1;//消息发送
+	const CMD_TIPS                     = 2;//系统提示
+	const CMD_MESSAGE_LIST             = 3;//消息列表
+	const CMD_USERINFO                 = 4;//详情接口
+	const CMD_LIST_ITEM                = 5;//list_item
+	const CMD_COMMON_MESSAGE_LIST      = 6;//common_message_list
+	const CONTENT_TYPE_TEXT            = 1;//content-type text
+	const CONTENT_TYPE_IMAGES          = 2;//content-type images
+	const CONTENT_TYPE_AUTO_REPLY      = 3;//content-type AUTO_REPLY
+	const CONTENT_TYPE_AUTO_MENU_REPLY = 4;//content-type AUTO_MENU_REPLY-自动菜单的回复
 	
 	public $cmd;
 	
