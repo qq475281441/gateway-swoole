@@ -554,7 +554,7 @@ class WebSocket extends MessageHandler
 						$last_message  = Db::name('user_message')->field('content,from_uid,content_type')
 							->where('message_id', $message_list['last_message_id'])->cache(true, $this->cache_time)->find();
 						
-						$message_list['name']    = $user_relation['user_remark'] ?: $user['nickname'];
+						$message_list['name']    = $user['nickname'];
 						$message_list['message'] = $message_list['last_message_id'] ? $last_message : new \stdClass();
 						
 						return $this->result($serv, $fd, $message_list, 0, MessageSendProtocols::CMD_LIST_ITEM);
@@ -584,10 +584,12 @@ class WebSocket extends MessageHandler
 						//本机的用户类型为买家
 						$mine = Db::name('user')->where('user_id', $uid['user_id'])->field('nickname,phone,user_id')->find();
 						
-						$router                = Db::name('router')->field('show_name,account_id,short_url')->where('short_url', $data['uid'])
+						$router  = Db::name('router')->field('show_name,account_id,short_url')->where('short_url', $data['uid'])
 							->cache(true, $this->cache_time)->find();
-						$account               = Db::name('account')->field('show_name,head_img_url')->where('account_id', $router['account_id'])
+						$account = Db::name('account')->field('show_name,head_img_url')->where('account_id', $router['account_id'])
 							->cache(true, $this->cache_time)->find();
+						
+						$account['show_name']  = $account['show_name'] ?: $data['uid'];
 						$their['show_name']    = $router['show_name'] ?: $account['show_name'];
 						$their['head_img_url'] = $account['head_img_url'];
 					}
