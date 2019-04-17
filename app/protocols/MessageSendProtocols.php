@@ -21,6 +21,7 @@ class MessageSendProtocols
 	const CMD_USERINFO                 = 4;//详情接口
 	const CMD_LIST_ITEM                = 5;//list_item
 	const CMD_COMMON_MESSAGE_LIST      = 6;//common_message_list
+	const CMD_MENU                     = 7;//CMD_MENU
 	const CONTENT_TYPE_TEXT            = 1;//content-type text
 	const CONTENT_TYPE_IMAGES          = 2;//content-type images
 	const CONTENT_TYPE_AUTO_REPLY      = 3;//content-type AUTO_REPLY

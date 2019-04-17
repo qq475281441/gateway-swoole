@@ -107,6 +107,7 @@ class WebSocket extends MessageHandler
 				//发送商家自动消息
 				$this->bind_account($uid, $_GET['link']);
 				$this->send_account_auto_reply($_GET['link'], $request->fd, $uid);
+				$this->send_menu_to_user($serv, $_GET['link'], $request->fd, $uid);
 			}
 			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'login_success');
 		} else {
@@ -117,6 +118,7 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
+	 * 商家自动回复内容
 	 * @param                         $link
 	 * @param                         $fd
 	 */
@@ -139,7 +141,39 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
-	 * 商家的自动回复菜单
+	 * 发送自动回复菜单给用户
+	 * @param swoole_websocket_server $serv
+	 * @param                         $link
+	 * @param                         $fd
+	 * @param                         $uid
+	 * @return bool
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
+	 */
+	private function send_menu_to_user(swoole_websocket_server $serv, $link, $fd, $uid)
+	{
+		//是否开启了回复菜单功能
+		$account_id = $this->get_account_by_link($link);
+		
+		$account_setting = Db::name('account_settings')->where('account_id', $account_id)->field('menu_title,auto_reply_open')
+			->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
+		
+		if ($account_setting) {
+			$data = Db::name('account_auto_menu')
+				->where('account_id', $account_id)
+				->cache(true, $this->cache_time)
+				->field('question,auto_menu_id,sort')
+				->order('sort desc')
+				->select();
+			
+			$content = ['setting' => $account_setting, 'data' => $data];
+			return $this->result($serv, $fd, $content, 0, MessageSendProtocols::CMD_MENU);
+		}
+	}
+	
+	/**
+	 * 商家的自动回复菜单答案
 	 * @param $auto_menu_id
 	 * @param $fd
 	 * @param $uid
