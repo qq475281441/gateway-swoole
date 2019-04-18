@@ -48,9 +48,10 @@ class WebSocketServer9501 extends Server
 	protected $option
 		                      = [
 			'worker_num'                => 4,    //worker process num
+			'task_worker_num'           => 4,    //worker process num
 			'backlog'                   => 128,   //listen backlog
 			'daemonize'                 => 0,
-			'log_file'                  => RUNTIME . 'log/ws84_server.log',
+			'log_file'                  => RUNTIME . 'log/ws9501_server.log',
 			'log_level'                 => 1,//0 => SWOOLE_LOG_DEBUG1 => SWOOLE_LOG_TRACE2 => SWOOLE_LOG_INFO3 => SWOOLE_LOG_NOTICE4 => SWOOLE_LOG_WARNING5 => SWOOLE_LOG_ERROR
 			'max_connection'            => 10000,//不填与服务器ulimit -n相同，默认不超过10000，一个连接约224bytes
 			'heartbeat_idle_time'       => 15,//15秒无数据就强制结束他
@@ -73,6 +74,8 @@ class WebSocketServer9501 extends Server
 			'pen_websocket_close_frame' => true,
 			//			'buffer_high_watermark' => 8 * 1024 * 1024,//控制FD缓存区高水位线，单位为字节
 			'send_yield'                => true,//发送数据协程调度
+			'task_enable_coroutine'     => true,//开启后自动在onTask回调中创建协程
+			'enable_coroutine'          => true,//设置为true时，底层自动在onRequest回调中创建协程，开发者无需自行使用go函数创建协程
 			//			'task_worker_num'          => 1,
 			//			// 设置worker/task子进程的所属用户
 			//			'user'                     => 'www',

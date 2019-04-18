@@ -9,10 +9,10 @@
 namespace app\handler;
 
 use app\auth\Auth;
-use app\common\JiGuangPush;
 use app\model\Users;
 use app\protocols\MessageSendProtocols;
 use app\service\Gateway;
+use app\task\TaskEvent;
 use Co;
 use http\Message;
 use im\core\connect\MysqlConnectPool;
@@ -58,7 +58,7 @@ class WebSocket extends MessageHandler
 	
 	protected $_uidConnections = [];//uid映射链接
 	
-	protected $cache_time      = 600;
+	public    $cache_time      = 600;
 	
 	/**
 	 * TestHandler constructor.
@@ -106,77 +106,14 @@ class WebSocket extends MessageHandler
 			if ($_GET['type'] == 'user') {
 				//发送商家自动消息
 				$this->bind_account($uid, $_GET['link']);
-				$this->send_account_auto_reply($_GET['link'], $request->fd, $uid);
-				$this->send_menu_to_user($serv, $_GET['link'], $request->fd, $uid);
+				$serv->task(['event' => 'send_account_auto_reply', 'args' => [$_GET['link'], $request->fd, $uid]]);
+				$serv->task(['event' => 'send_menu_to_user', 'args' => [$_GET['link'], $request->fd, $uid]]);
 			}
 			return $this->result($serv, $request->fd, '验证通过', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'login_success');
 		} else {
 			$this->result($serv, $request->fd, 'token无效', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			co::sleep(100);
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
-		}
-	}
-	
-	/**
-	 * 商家自动回复内容
-	 * @param                         $link
-	 * @param                         $fd
-	 */
-	private function send_account_auto_reply($link, $fd, $uid)
-	{
-		$chan_router = new \Chan(1);
-		go(function () use ($link, $chan_router) {
-			$router = Db::name('router')->where('short_url', $link)->field('account_id')
-				->cache(true, $this->cache_time)->find();
-			$chan_router->push($router);
-		});
-		
-		go(function () use ($uid, $chan_router, $fd) {
-			if ($account_id = $chan_router->pop(100)) {
-				$account_setting         = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
-					->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
-				$request                 = new GatewayProtocols();
-				$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
-				$request->from_uid       = $account_id['account_id'];
-				$request->from_user_type = 2;
-				$request->to_uid         = $uid;
-				$request->to_user_type   = 1;
-				$request->data           = ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
-				$request->fd             = $fd;
-				return $this->process->write($request->encode());
-			}
-		});
-	}
-	
-	/**
-	 * 发送自动回复菜单给用户
-	 * @param swoole_websocket_server $serv
-	 * @param                         $link
-	 * @param                         $fd
-	 * @param                         $uid
-	 * @return bool
-	 * @throws \think\db\exception\DataNotFoundException
-	 * @throws \think\db\exception\DbException
-	 * @throws \think\db\exception\ModelNotFoundException
-	 */
-	private function send_menu_to_user(swoole_websocket_server $serv, $link, $fd, $uid)
-	{
-		//是否开启了回复菜单功能
-		$account_id = $this->get_account_by_link($link);
-		
-		$account_setting = Db::name('account_settings')->where('account_id', $account_id)->field('menu_title,auto_reply_open')
-			->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
-		
-		if ($account_setting) {
-			$data = Db::name('account_auto_menu')
-				->where('account_id', $account_id)
-				->cache(true, $this->cache_time)
-				->field('question,auto_menu_id,sort')
-				->order('sort desc')
-				->select();
-			
-			$content = ['setting' => $account_setting, 'data' => $data];
-			return $this->result($serv, $fd, $content, 0, MessageSendProtocols::CMD_MENU);
 		}
 	}
 	
@@ -233,7 +170,7 @@ class WebSocket extends MessageHandler
 		});
 		
 		go(function () use ($uid, $link, $chan_router) {
-			$router = $chan_router->pop(1);
+			$router = $chan_router->pop(10);
 			$chan_router->push($router);
 			$exis_relation = Db::name('account_user_relation')->where('account_id', $router['account_id'])
 				->where('user_id', $uid)
@@ -252,7 +189,7 @@ class WebSocket extends MessageHandler
 		});
 		
 		go(function () use ($uid, $link, $chan_router) {
-			$router            = $chan_router->pop(1);
+			$router            = $chan_router->pop(10);
 			$exis_message_list = Db::name('account_message_list')->where('account_id', $router['account_id'])
 				->where('user_id', $uid)
 				->field('account_id')->find();
@@ -295,7 +232,7 @@ class WebSocket extends MessageHandler
 	 * @param int                     $user_type
 	 * @return int
 	 */
-	protected function unbindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT)
+	public function unbindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT)
 	{
 		$req_data       = new GatewayProtocols();
 		$req_data->cmd  = GatewayProtocols::CMD_UNREGISTER_USER;
@@ -406,8 +343,7 @@ class WebSocket extends MessageHandler
 	 * @param swoole_server $serv
 	 * @param               $worker_id
 	 */
-	public
-	function onWorkerStart(\swoole_server $serv, $worker_id)
+	public function onWorkerStart(\swoole_server $serv, $worker_id)
 	{
 		RedisConnectPool::getInstance()->init();
 		if ($serv->taskworker === true) {// 表示当前的进程是Task工作进程
@@ -420,8 +356,7 @@ class WebSocket extends MessageHandler
 	/**
 	 *维持子进程的心跳
 	 */
-	private
-	function holdPing()
+	private function holdPing()
 	{
 		swoole_timer_tick(7000, function () {//让子进程维持和网关的心跳
 			$body      = new GatewayProtocols();
@@ -444,31 +379,7 @@ class WebSocket extends MessageHandler
 	{
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_GATEWAY_PUSH) {//单个消息推送任务
-			$fd = $data->fd;
-			if ($serv->isEstablished($fd)) {
-				$messageSend                 = new MessageSendProtocols();
-				$messageSend->cmd            = MessageSendProtocols::CMD_SEND_MESSAGE;//发送消息
-				$messageSend->to_user_type   = $data->to_user_type;
-				$messageSend->to_uid         = $data->to_uid;
-				$messageSend->from_uid       = $data->from_uid;
-				$messageSend->from_user_type = $data->from_user_type;
-				$messageSend->data           = $data->data;
-				$messageSend->message_id     = $data->message_id;
-				$messageSend->from_name      = $data->extra;
-				$messageSend->time           = time();
-				if ($data->from_user_type == '1') {
-					$relation                 = Db::name('account_user_relation')->where('account_id', $data->to_uid)
-						->where('user_id', $data->from_uid)
-						->field('need_notice')
-						->cache(true, $this->cache_time, $this->get_relation_cache_tag($data->to_uid, $data->from_uid))
-						->find();
-					$messageSend->need_notice = $relation ? $relation['need_notice'] : 1;
-				}
-				
-				return $serv->push($fd, $messageSend->encode());//向fd发消息
-			} else {
-				return $this->unbindID($serv, $fd, $data->to_uid, $data->to_user_type);
-			}
+			$serv->task(['event' => 'push_one_message', 'args' => [$data]]);
 		} else {
 			$this->console->error('无效消息');
 		}
@@ -482,7 +393,7 @@ class WebSocket extends MessageHandler
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	private function get_account_by_link($link)
+	public function get_account_by_link($link)
 	{
 		$router = Db::name('router')->field('account_id')->where('short_url', $link)->cache(true, $this->cache_time)->find();
 		return $router ? $router['account_id'] : false;
@@ -686,7 +597,7 @@ class WebSocket extends MessageHandler
 					break;
 				case 'delete_list_item'://{"cmd":"delete_list_item","message_list_id":"1"}
 					$user = $this->explore_local_uid($uid);
-					if ($user['user_type'] <> '2') {
+					if ($user['user_type'] <> '2' || !isset($data['message_list_id'])) {
 						return false;
 					}
 					$message_list_id = $data['message_list_id'];
@@ -801,7 +712,7 @@ class WebSocket extends MessageHandler
 	 * @param string        $msg 提示信息
 	 * @return bool
 	 */
-	protected function result(swoole_server $serv, $fd, $content, $content_type = MessageSendProtocols::CONTENT_TYPE_TEXT, $cmd = MessageSendProtocols::CMD_TIPS, $msg = 'success', $extra = '')
+	public function result(swoole_server $serv, $fd, $content, $content_type = MessageSendProtocols::CONTENT_TYPE_TEXT, $cmd = MessageSendProtocols::CMD_TIPS, $msg = 'success', $extra = '')
 	{
 		if (!is_array($content) && !trim($content)) {
 			return false;
@@ -1016,7 +927,7 @@ class WebSocket extends MessageHandler
 	 * @param $user_id
 	 * @return string
 	 */
-	private function get_relation_cache_tag($account_id, $user_id)
+	public function get_relation_cache_tag($account_id, $user_id)
 	{
 		return md5($account_id . "_" . $user_id);
 	}
@@ -1089,5 +1000,18 @@ class WebSocket extends MessageHandler
 		}
 		
 		return array_unique($return);
+	}
+	
+	/**
+	 * onTask
+	 * @param swoole_websocket_server $serv
+	 * @param Swoole\Server\Task      $task
+	 * @return
+	 */
+	public function onTask(swoole_websocket_server $serv, $task)
+	{
+		$taskEvent             = new TaskEvent($serv, $task, $this->redis, $this->process);
+		$taskEvent->msgHandler = $this;
+		return $taskEvent->run();
 	}
 }

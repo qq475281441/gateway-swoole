@@ -9,7 +9,9 @@
 namespace im\core;
 
 use im\core\facade\Cache;
+use Swoole\Process;
 use Swoole\Runtime;
+use swoole_process;
 use think\Db;
 
 class App extends Container
@@ -28,6 +30,8 @@ class App extends Container
 	private $daemonize        = false;
 	
 	private $sig              = SIGTERM;
+	
+	private $process_pool     = [];
 	
 	public function __construct()
 	{
@@ -49,6 +53,7 @@ class App extends Container
 	private function init()
 	{
 		$this->sysServers = $this->config->get('servers');
+		
 		$extend_class_map = $this->config->get('extend_class_map');
 		$extend_file_map  = $this->config->get('extend_file_map');
 		if (count($extend_class_map) > 0) {//加载第三方类库
@@ -72,22 +77,24 @@ class App extends Container
 	private function parseCommand()
 	{
 		global $argv;
-		if (count($argv) < 3) {//命令最少三个参数
+		if (count($argv) < 2) {//命令最少2个参数
 			echo 'Command error';
 			exit;
 		}
-		if (!isset($this->sysServers[$argv[1]])) {//服务是否注册
+		if (!isset($this->sysServers[$argv[1]]) && !in_array($argv[1], ['start', 'stop'])) {//服务是否注册
 			echo 'Server is not register!';
 			exit;
 		}
-		if (!in_array($argv[2], $this->avaliablecommand)) {//命令是否有效
-			echo 'Command is not allow';
-			exit;
+		if (isset($argv[2])) {
+			if ($argv[2] != '-d' && !in_array($argv[2], $this->avaliablecommand)) {//命令是否有效
+				echo 'Command is not allow';
+				exit;
+			}
 		}
 		
 		$this->server = $argv[1];//要启动的服务
 		
-		$this->command = $argv[2];
+		$this->command = isset($argv[2]) ? $argv[2] : '';
 		
 		if (isset($argv[3])) {
 			$this->daemonize = $argv[3] == '-d' ? true : false;
@@ -102,22 +109,40 @@ class App extends Container
 	 */
 	private function runServer()
 	{
-		$class   = $this->sysServers[$this->server];
-		$options = ['daemonize' => $this->daemonize, 'pid_file' => RUNTIME . 'pid_file/server_' . $this->server . '_.pid'];
-		
-		switch ($this->command) {
-			case 'start':
-				$servObj = $this->make($class, ['options' => $options]);
-				$servObj->start();
-				$this->console->success('服务启动成功...');
-				break;
-			case 'stop':
-				return $this->stop($options['pid_file']);
-				break;
-			default:
-				$servObj = $this->make($class, ['options' => $options]);
-				$servObj->start();
-				break;
+		global $argv;
+		if ($this->server == 'start') {//启动所有
+			foreach ($this->sysServers as $k => $v) {
+				$p = new \swoole_process(function (swoole_process $process) use ($v, $k, $argv) {
+					swoole_set_process_name(sprintf('im-server:%s', $k));
+					$daemonize = (isset($argv[2]) && $argv[2] == '-d') ? true : false;
+					$options   = ['daemonize' => $daemonize, 'pid_file' => RUNTIME . 'pid_file/server_' . $k . '_.pid'];
+					$servObj   = $this->make($v, ['options' => $options]);
+					$servObj->start();
+					$this->console->success('服务[' . $k . ']启动成功...');
+					usleep(500);
+				});
+				
+				$this->process_pool[$k] = $p;
+				$p->start();
+			}
+		} else {
+			$class   = $this->sysServers[$this->server];
+			$options = ['daemonize' => $this->daemonize, 'pid_file' => RUNTIME . 'pid_file/server_' . $this->server . '_.pid'];
+			
+			switch ($this->command) {
+				case 'start':
+					$servObj = $this->make($class, ['options' => $options]);
+					$servObj->start();
+					$this->console->success('服务启动成功...');
+					break;
+				case 'stop':
+					return $this->stop($options['pid_file']);
+					break;
+				default:
+					$servObj = $this->make($class, ['options' => $options]);
+					$servObj->start();
+					break;
+			}
 		}
 	}
 	
