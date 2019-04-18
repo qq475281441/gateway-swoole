@@ -64,19 +64,28 @@ class TaskEvent
 	 */
 	private function send_account_auto_reply($link, $fd, $uid)
 	{
-		$account_id              = Db::name('router')->where('short_url', $link)->field('account_id')
+		$account_id      = Db::name('router')->where('short_url', $link)->field('account_id')
 			->cache(true, $this->msgHandler->cache_time)->find();
-		$account_setting         = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
+		$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
 			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time)->find();
-		$request                 = new GatewayProtocols();
-		$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
-		$request->from_uid       = $account_id['account_id'];
-		$request->from_user_type = 2;
-		$request->to_uid         = $uid;
-		$request->to_user_type   = 1;
-		$request->data           = ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
-		$request->fd             = $fd;
-		return $this->process->write($request->encode());
+		//		$request                 = new GatewayProtocols();
+		//		$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
+		//		$request->from_uid       = $account_id['account_id'];
+		//		$request->from_user_type = 2;
+		//		$request->to_uid         = $uid;
+		//		$request->to_user_type   = 1;
+		//		$request->data           = ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
+		//		$request->fd             = $fd;
+		//
+		//		for ($i = 0; $i < 100; $i++) {
+		//			$this->process->write($request->encode());
+		//		}
+		//		return $this->process->write($request->encode());
+		
+		return $this->msgHandler->result($this->serv, $fd, [
+			'content'      => $account_setting['auto_reply'],
+			'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY
+		], 0, MessageSendProtocols::CMD_SEND_MESSAGE);
 	}
 	
 	/**

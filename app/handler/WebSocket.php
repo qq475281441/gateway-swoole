@@ -896,29 +896,19 @@ class WebSocket extends MessageHandler
 	}
 	
 	/**
-	 * 获取用户的备注或昵称
+	 * 获取用户的昵称
 	 * @param $uid
-	 * @param $account_id
 	 * @return mixed
 	 * @throws \think\db\exception\DataNotFoundException
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	private function get_username($uid, $account_id)
+	private function get_username($uid)
 	{
-		$data = Db::name('account_user_relation')->where('account_id', $account_id)
-			->where('user_id', $uid)
-			->field('user_remark')
+		$user = Db::name('user')->field('nickname')->where('user_id', $uid)
 			->cache(true, $this->cache_time, $this->get_relation_cache_tag($account_id, $uid))
 			->find();
-		if ($data && $data['user_remark']) {
-			return $data['user_remark'];
-		} else {
-			$user = Db::name('user')->field('nickname')->where('user_id', $uid)
-				->cache(true, $this->cache_time, $this->get_relation_cache_tag($account_id, $uid))
-				->find();
-			return $user['nickname'];
-		}
+		return $user['nickname'];
 	}
 	
 	/**

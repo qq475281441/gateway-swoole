@@ -103,6 +103,7 @@ class GatewayHandler extends MessageHandler
 	 */
 	public function onReceive(swoole_server $serv, $fd, $from_id, $data)
 	{
+		var_dump($data);
 		$data = (new GatewayProtocols())->decode($data);
 		if ($data->cmd == GatewayProtocols::CMD_PING) {//ping
 			$response      = new GatewayProtocols();
@@ -149,7 +150,6 @@ class GatewayHandler extends MessageHandler
 					if ($lock->lockwait(1)) {
 						$user_info = $this->user_table->get($uid);
 						if ($user_info && $user_info <> '' && $user_info['data'] <> 'null') {
-							var_dump($user_info);
 							$user_info = json_decode($user_info['data'], true);
 							foreach ($user_info as $k => $v) {
 								if ($v['serv_key'] == $serv_key && $v['fd'] == $user_fd) {
