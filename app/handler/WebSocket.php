@@ -133,9 +133,17 @@ class WebSocket extends MessageHandler
 		
 		go(function () use ($uid, $chan_router, $fd) {
 			if ($account_id = $chan_router->pop(100)) {
-				$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
+				$account_setting         = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
 					->cache(md5($account_id['account_id'] . 'account_settings'), $this->cache_time)->find();
-				$this->sendToUID('2_' . $account_id['account_id'], $uid, 1, ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY], $fd);
+				$request                 = new GatewayProtocols();
+				$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
+				$request->from_uid       = $account_id['account_id'];
+				$request->from_user_type = 2;
+				$request->to_uid         = $uid;
+				$request->to_user_type   = 1;
+				$request->data           = ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
+				$request->fd             = $fd;
+				return $this->process->write($request->encode());
 			}
 		});
 	}
@@ -193,11 +201,19 @@ class WebSocket extends MessageHandler
 		
 		go(function () use ($uid, $chan_auto_menu, $fd) {
 			if ($auto_menu = $chan_auto_menu->pop(100)) {
-				$this->sendToUID('2_' . $auto_menu['account_id'], $uid, 1,
-				                 [
-					                 'content'      => $auto_menu['answer'],
-					                 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
-				                 ], $fd);
+				
+				$request                 = new GatewayProtocols();
+				$request->cmd            = GatewayProtocols::CMD_SEND_TO_UID;
+				$request->from_uid       = $auto_menu['account_id'];
+				$request->from_user_type = 2;
+				$request->to_uid         = $uid;
+				$request->to_user_type   = 1;
+				$request->data           = [
+					'content'      => $auto_menu['answer'],
+					'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
+				];
+				$request->fd             = $fd;
+				return $this->process->write($request->encode());
 			}
 		});
 	}

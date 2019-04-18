@@ -194,7 +194,13 @@ class GatewayHandler extends MessageHandler
 				}
 			}
 		}
-		if ($need_to_sender === true && $sender_fds && $sender_fds <> '' && isset($sender_fds['data']) && $data->data['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY) {
+		if ($need_to_sender === true
+			&& $sender_fds
+			&& $sender_fds <> ''
+			&& isset($sender_fds['data'])
+			&& $data->data['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY
+			&& $data->data['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
+		) {
 			$sender_fds = json_decode($sender_fds['data'], true);//该用户绑定的fd
 			if (!$sender_fds) {
 				return false;
