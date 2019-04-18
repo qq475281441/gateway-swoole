@@ -871,9 +871,7 @@ class WebSocket extends MessageHandler
 				$account_id            = $utype == 2 ? $user_id : $to_uid;
 				$user_id               = $to_user_type == 1 ? $to_uid : $user_id;
 				$update['update_time'] = time();
-				if ($utype == '1') {//买家发的
-					$update['last_message_id'] = $msg_id;
-				}
+				$update['last_message_id'] = $msg_id;
 				$update['is_delete'] = 0;
 				Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update($update);
 				$chan_id->close();
