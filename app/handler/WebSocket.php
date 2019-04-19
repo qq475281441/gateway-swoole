@@ -88,6 +88,7 @@ class WebSocket extends MessageHandler
 	public function onOpen(swoole_websocket_server $serv, swoole_http_request $request)
 	{
 		$_GET = $request->get;
+		var_dump($_GET);
 		if (!isset($_GET['token']) || !isset($_GET['type'])) {
 			$this->result($serv, $request->fd, '缺少token或type', MessageSendProtocols::CONTENT_TYPE_TEXT, MessageSendProtocols::CMD_TIPS, 'token_invalid');
 			return $serv->disconnect($request->fd, 1001, 'token_invalid');
@@ -132,7 +133,6 @@ class WebSocket extends MessageHandler
 		go(function () use ($auto_menu_id, $chan_auto_menu) {
 			$data = Db::name('account_auto_menu')->where('auto_menu_id', $auto_menu_id)
 				->field('account_id,answer')
-				->cache(md5('auto_menu_id' . $auto_menu_id), $this->cache_time)
 				->find();
 			if ($data) {
 				$chan_auto_menu->push($data);
@@ -436,6 +436,7 @@ class WebSocket extends MessageHandler
 		if ($frame->opcode == 0x08) {//客户端发送关闭帧
 			$code   = $frame->code;
 			$reason = $frame->reason;
+			var_dump('客户端发送关闭帧');
 			$serv->close($frame->fd);
 		}
 		$fd   = $frame->fd;

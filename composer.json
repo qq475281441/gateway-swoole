@@ -1,7 +1,8 @@
 {
     "require": {
         "eaglewu/swoole-ide-helper": "dev-master",
-        "jpush/jpush": "^3.5"
+        "jpush/jpush": "^3.5",
+        "swlib/saber": "^1.0"
     },
     "require-dev": {
     }

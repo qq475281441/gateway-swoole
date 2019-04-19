@@ -103,15 +103,17 @@ class TaskEvent
 		$account_id = $this->msgHandler->get_account_by_link($link);
 		
 		$account_setting = Db::name('account_settings')->where('account_id', $account_id)->field('menu_title,auto_reply_open')
-			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time)->find();
+//			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time, 'account_auto_menu' . $account_id)
+			->find();
 		
 		if ($account_setting) {
-			$data                     = Db::name('account_auto_menu')
+			$data = Db::name('account_auto_menu')
 				->where('account_id', $account_id)
-				->cache(true, $this->msgHandler->cache_time)
+//				->cache(true, $this->msgHandler->cache_time, 'account_auto_menu' . $account_id)
 				->field('question,auto_menu_id,sort')
 				->order('sort desc')
 				->select();
+			
 			$response                 = new MessageSendProtocols();
 			$response->cmd            = MessageSendProtocols::CMD_MENU;
 			$response->from_uid       = $account_id['account_id'];
