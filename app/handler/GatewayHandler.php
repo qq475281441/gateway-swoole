@@ -200,6 +200,7 @@ class GatewayHandler extends MessageHandler
 			&& isset($sender_fds['data'])
 			&& $data->data['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY
 			&& $data->data['content_type'] <> MessageSendProtocols::CONTENT_TYPE_AUTO_MENU_REPLY
+			&& $data->from_user_type <> '1'//买家自己发的消息不要推给自己的另一个客户端，他们跟一个商家只能一个页面聊天
 		) {
 			$sender_fds = json_decode($sender_fds['data'], true);//该用户绑定的fd
 			if (!$sender_fds) {

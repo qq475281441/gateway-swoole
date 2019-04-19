@@ -64,10 +64,11 @@ class TaskEvent
 	 */
 	private function send_account_auto_reply($link, $fd, $uid)
 	{
-		$account_id               = Db::name('router')->where('short_url', $link)->field('account_id')
+		$account_id      = Db::name('router')->where('short_url', $link)->field('account_id')
 			->cache(true, $this->msgHandler->cache_time)->find();
-		$account_setting          = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
+		$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
 			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time)->find();
+		
 		$response                 = new MessageSendProtocols();
 		$response->cmd            = MessageSendProtocols::CMD_SEND_MESSAGE;
 		$response->from_uid       = $account_id['account_id'];
@@ -102,15 +103,24 @@ class TaskEvent
 			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time)->find();
 		
 		if ($account_setting) {
-			$data = Db::name('account_auto_menu')
+			$data                     = Db::name('account_auto_menu')
 				->where('account_id', $account_id)
 				->cache(true, $this->msgHandler->cache_time)
 				->field('question,auto_menu_id,sort')
 				->order('sort desc')
 				->select();
+			$response                 = new MessageSendProtocols();
+			$response->cmd            = MessageSendProtocols::CMD_MENU;
+			$response->from_uid       = $account_id['account_id'];
+			$response->from_user_type = 2;
+			$response->to_uid         = $uid;
+			$response->to_user_type   = 1;
+			$response->data           = ['setting' => $account_setting, 'data' => $data];
+			$response->time           = time();
 			
-			$content = ['setting' => $account_setting, 'data' => $data];
-			return $this->msgHandler->result($this->serv, $fd, $content, 0, MessageSendProtocols::CMD_MENU);
+			if ($this->serv->isEstablished($fd)) {
+				return $this->serv->push($fd, $response->encode());
+			}
 		}
 	}
 	

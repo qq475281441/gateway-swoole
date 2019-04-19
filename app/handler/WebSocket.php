@@ -122,6 +122,7 @@ class WebSocket extends MessageHandler
 	 * @param $auto_menu_id
 	 * @param $fd
 	 * @param $uid
+	 * @param $link
 	 */
 	private function send_account_auto_menu_reply($auto_menu_id, $fd, $uid)
 	{
@@ -462,7 +463,7 @@ class WebSocket extends MessageHandler
 					//						//自己发给自己
 					//						return $this->result($this->ser)
 					//		}
-					return $this->sendToUID($uid, $to_uid, $to_user_type, $content, $fd);
+					return $this->sendToUID($uid, $to_uid, $to_user_type, $content, $fd, $data['to_uid']);
 					break;
 				case 'list_item'://商家收到消息但是列表项已被删除的情况，需要调这个接口拉列表项数据{"cmd":"list_item","uid":"1"}
 					$user = $this->explore_local_uid($uid);
@@ -513,12 +514,13 @@ class WebSocket extends MessageHandler
 						
 						$router  = Db::name('router')->field('show_name,account_id,short_url')->where('short_url', $data['uid'])
 							->cache(true, $this->cache_time)->find();
-						$account = Db::name('account')->field('show_name,head_img_url')->where('account_id', $router['account_id'])
+						$account = Db::name('account')->field('show_name,head_img_url,account_id')->where('account_id', $router['account_id'])
 							->cache(true, $this->cache_time)->find();
 						
 						$account['show_name']  = $account['show_name'] ?: $data['uid'];
 						$their['show_name']    = $router['show_name'] ?: $account['show_name'];
 						$their['head_img_url'] = $account['head_img_url'];
+						$their['account_id']   = $account['account_id'];
 					}
 					
 					return $this->result($serv, $fd, ['mine' => $mine, 'their' => $their], 0, MessageSendProtocols::CMD_USERINFO);
@@ -813,12 +815,13 @@ class WebSocket extends MessageHandler
 	 * @param $to_user_type
 	 * @param $content
 	 * @param $fd
-	 * @return void
+	 * @param $link
+	 * @return bool
 	 * @throws \think\db\exception\DataNotFoundException
 	 * @throws \think\db\exception\DbException
 	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content, $fd)
+	protected function sendToUID($from_uid, $to_uid, $to_user_type, $content, $fd, $link)
 	{
 		$uid_array = explode('_', $from_uid);//2_16
 		$utype     = $uid_array[0];//用户类型
@@ -833,14 +836,17 @@ class WebSocket extends MessageHandler
 		$request->data           = $content;
 		$request->fd             = $fd;
 		
-		if ($utype == '1') {
+		if ($utype == '1') {//买家发
 			$request->extra = $this->get_username($user_id, $to_uid);
+		} else {//卖家发
+			$request->extra = $link;
 		}
 		if (mb_strlen($content['content']) < 1) {
 			return false;
 		}
 		$chan_id = new \Chan(1);
 		go(function () use ($content, $user_id, $utype, $to_uid, $to_user_type, $chan_id) {
+			
 			$insertId = Db::name('user_message')->insertGetId(
 				[
 					'content'        => $content['content'],
@@ -868,11 +874,11 @@ class WebSocket extends MessageHandler
 		go(function () use ($utype, $user_id, $to_uid, $to_user_type, $chan_id) {
 			if ($msg_id = $chan_id->pop(100)) {
 				$chan_id->push($msg_id);
-				$account_id            = $utype == 2 ? $user_id : $to_uid;
-				$user_id               = $to_user_type == 1 ? $to_uid : $user_id;
-				$update['update_time'] = time();
+				$account_id                = $utype == 2 ? $user_id : $to_uid;
+				$user_id                   = $to_user_type == 1 ? $to_uid : $user_id;
+				$update['update_time']     = time();
 				$update['last_message_id'] = $msg_id;
-				$update['is_delete'] = 0;
+				$update['is_delete']       = 0;
 				Db::name('account_message_list')->where('account_id', $account_id)->where('user_id', $user_id)->update($update);
 				$chan_id->close();
 			}
