@@ -71,7 +71,7 @@ class GatewayProtocols
 	 */
 	public function encode()
 	{
-		$data  = [
+		$data = [
 			'cmd'            => $this->cmd,
 			'key'            => $this->key,
 			'fd'             => $this->fd,
@@ -84,6 +84,11 @@ class GatewayProtocols
 			'data'           => $this->data,
 			'extra'          => $this->extra,
 		];
+		foreach ($data as $k => $v) {
+			if ($v == '' || $v == null) {
+				unset($data[$k]);
+			}
+		}
 		$str   = json_encode($data);
 		$final = pack('N', strlen($str)) . $str;
 		return $final;

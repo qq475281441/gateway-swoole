@@ -102,10 +102,12 @@ class WebSocket extends MessageHandler
 		}
 		if ($uid = $this->auth->validateToken($_GET['token'], $_GET['type'], isset($_GET['authtype']) ? $_GET['authtype'] : '')) {
 			//验证通过,在网关绑定uid
-			$this->bindID($serv, $request->fd, $uid, $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT);
+			$this->bindID($serv, $request->fd, $uid,
+			              $_GET['type'] == 'user' ? GatewayProtocols::TYPE_USER_U : GatewayProtocols::TYPE_USER_ACCOUNT,
+			              $_GET['type'] == 'user' ? $_GET['link'] : '');
 			if ($_GET['type'] == 'user') {
-				//发送商家自动消息
 				$this->bind_account($uid, $_GET['link']);
+				//发送商家自动消息
 				$serv->task(['event' => 'send_account_auto_reply', 'args' => [$_GET['link'], $request->fd, $uid]]);
 				$serv->task(['event' => 'send_menu_to_user', 'args' => [$_GET['link'], $request->fd, $uid]]);
 			}
@@ -210,17 +212,28 @@ class WebSocket extends MessageHandler
 	
 	/**
 	 * 链接绑定uid
-	 * @param $fd
-	 * @param $uid
+	 * @param swoole_websocket_server $serv
+	 * @param                         $fd
+	 * @param                         $uid
+	 * @param int                     $user_type
+	 * @param string                  $link
 	 * @return int
+	 * @throws \think\db\exception\DataNotFoundException
+	 * @throws \think\db\exception\DbException
+	 * @throws \think\db\exception\ModelNotFoundException
 	 */
-	protected function bindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT)
+	protected function bindID(swoole_websocket_server $serv, $fd, $uid, $user_type = GatewayProtocols::TYPE_USER_ACCOUNT, $link = '')
 	{
 		$req_data       = new GatewayProtocols();
 		$req_data->cmd  = GatewayProtocols::CMD_REGISTER_USER;
 		$req_data->fd   = $fd;
 		$req_data->data = $user_type . '_' . $uid;
 		$req_data->key  = $this->serv_key;
+		
+		if ($link <> '' && $account_id = $this->get_account_by_link($link)) {//传递link过去，因为要绑定fd，商家给买家推消息的时候就可以少推几条，节省带宽
+			$req_data->extra = $account_id;
+		}
+		
 		$this->localBindUID($serv, $fd, $uid, $user_type);
 		return $this->process->write($req_data->encode());
 	}
@@ -418,8 +431,7 @@ class WebSocket extends MessageHandler
 	 * @return bool|void
 	 * @throws \Exception
 	 */
-	public
-	function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
+	public function onMessage(swoole_websocket_server $serv, \swoole_websocket_frame $frame)
 	{
 		if ($frame->opcode == 0x08) {//客户端发送关闭帧
 			$code   = $frame->code;

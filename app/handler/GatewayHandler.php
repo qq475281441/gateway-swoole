@@ -9,6 +9,7 @@
 namespace app\handler;
 
 use app\auth\Auth;
+use app\common\JiGuangPush;
 use app\model\Users;
 use app\protocols\MessageSendProtocols;
 use http\Message;
@@ -64,12 +65,17 @@ class GatewayHandler extends MessageHandler
 	{
 	}
 	
+	/**
+	 * @param swoole_server $serv
+	 * @param               $worker_id
+	 */
 	public function onWorkerStart(swoole_server $serv, $worker_id)
 	{
 		RedisConnectPool::getInstance()->init();
 		if (!$serv->taskworker && $worker_id == 1) {
 			swoole_timer_tick(2000, function () use ($serv) {
 				$unread = $this->redis->sDiff($this->auth->get_unread_list_key(), $this->auth->get_readed_list_key());
+				$jPush  = new JiGuangPush();
 				foreach ($unread as $k => $v) {
 					$message_id = explode('_', $v);
 					$account_id = $message_id[0];
@@ -78,8 +84,28 @@ class GatewayHandler extends MessageHandler
 						$messageObj = (new GatewayProtocols())->decode($msg_detail);
 						if ($messageObj->to_uid && $messageObj->to_uid == $account_id && $this->redis->get($this->auth->get_ping_key($messageObj->to_uid))) {
 							$this->send_to_uid($serv, $messageObj, false);
-						} else {
-							continue;
+						} else {//离线-极光
+							
+							$jPush_result = new \Chan(1);
+							go(function () use ($jPush, $account_id, $messageObj, $jPush_result) {
+								$result = $jPush->pushImMsg($account_id,
+								                            $messageObj->extra,
+								                            $messageObj->data['content_type'] == MessageSendProtocols::CONTENT_TYPE_IMAGES ?
+									                            '[图片消息]' : $messageObj->data['content'],
+								                            $messageObj->from_uid);
+								if ($result === true) {
+									$jPush_result->push([$messageObj->message_id, $messageObj->to_uid]);
+								} else {
+									//极光推送失败的情况
+									
+								}
+							});
+							
+							go(function () use ($jPush_result) {
+								if ($message = $jPush_result->pop(10)) {
+									$this->redis->sAdd($this->auth->get_readed_list_key(), $message[1] . '_' . $message[0]);
+								}
+							});
 						}
 					} else {
 						continue;
@@ -127,7 +153,11 @@ class GatewayHandler extends MessageHandler
 					$user_fd  = $data->fd;//获取fd
 					$uid      = $data->data;//获取uid
 					$serv_key = $data->key;//获取servkey
-					$lock     = new swoole_lock(SWOOLE_MUTEX);//加锁
+					
+					if (explode('_', $uid)[0] == '1') {//买家
+						$this->redis->set("user_account_id:$uid:$user_fd:$serv_key", $data->extra);
+					}
+					$lock = new swoole_lock(SWOOLE_MUTEX);//加锁
 					if ($lock->lockwait(1)) {
 						$user_info = $this->user_table->get($uid);
 						if ($user_info && $user_info <> '') {
@@ -146,7 +176,10 @@ class GatewayHandler extends MessageHandler
 					$user_fd  = $data->fd;//获取fd
 					$uid      = $data->data;//获取uid
 					$serv_key = $data->key;//获取servkey
-					$lock     = new swoole_lock(SWOOLE_MUTEX);//加锁
+					if (explode('_', $uid)[0] == '1') {//买家
+						$this->redis->del("user_account_id:$uid:$user_fd:$serv_key");
+					}
+					$lock = new swoole_lock(SWOOLE_MUTEX);//加锁
 					if ($lock->lockwait(1)) {
 						$user_info = $this->user_table->get($uid);
 						if ($user_info && $user_info <> '' && $user_info['data'] <> 'null') {
@@ -175,7 +208,7 @@ class GatewayHandler extends MessageHandler
 	 * @param               $data
 	 * @return bool
 	 */
-	private function send_to_uid(swoole_server $serv, $data, $need_to_sender = true)
+	private function send_to_uid(swoole_server $serv, GatewayProtocols $data, $need_to_sender = true)
 	{
 		$recv_fds   = $this->user_table->get($data->to_user_type . '_' . $data->to_uid);
 		$sender_fds = $this->user_table->get($data->from_user_type . '_' . $data->from_uid);
@@ -190,7 +223,14 @@ class GatewayHandler extends MessageHandler
 				$data->cmd = GatewayProtocols::CMD_GATEWAY_PUSH;//协议转发复用
 				$data->fd  = $v['fd'];//需要接受消息的fd
 				if ($serv->exist($serv_fd['fd'])) {
-					$serv->send($serv_fd['fd'], $data->encode());
+					if ($data->to_user_type == '1') {//商家发给买家,判断fd是否访问的是当前发送信息的商家店铺，否则不发消息给他
+						$user_account_id = $this->redis->get("user_account_id:1_$data->to_uid:$data->fd:" . $v['serv_key']);
+						if ($user_account_id && $user_account_id == $data->from_uid) {
+							$serv->send($serv_fd['fd'], $data->encode());
+						}
+					} else {//买家发给商家
+						$serv->send($serv_fd['fd'], $data->encode());
+					}
 				}
 			}
 		}

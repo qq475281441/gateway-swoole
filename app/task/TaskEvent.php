@@ -67,19 +67,22 @@ class TaskEvent
 		$account_id      = Db::name('router')->where('short_url', $link)->field('account_id')
 			->cache(true, $this->msgHandler->cache_time)->find();
 		$account_setting = Db::name('account_settings')->where('account_id', $account_id['account_id'])->field('auto_reply')
+			->where('auto_reply_open', 1)
 			->cache(md5($account_id['account_id'] . 'account_settings'), $this->msgHandler->cache_time)->find();
 		
-		$response                 = new MessageSendProtocols();
-		$response->cmd            = MessageSendProtocols::CMD_SEND_MESSAGE;
-		$response->from_uid       = $account_id['account_id'];
-		$response->from_user_type = 2;
-		$response->to_uid         = $uid;
-		$response->to_user_type   = 1;
-		$response->data           = ['content' => $account_setting['auto_reply'], 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
-		$response->time           = time();
-		
-		if ($this->serv->isEstablished($fd)) {
-			return $this->serv->push($fd, $response->encode());
+		if (trim($account_setting['auto_reply']) <> '') {//空数据不发送
+			$response                 = new MessageSendProtocols();
+			$response->cmd            = MessageSendProtocols::CMD_SEND_MESSAGE;
+			$response->from_uid       = $account_id['account_id'];
+			$response->from_user_type = 2;
+			$response->to_uid         = $uid;
+			$response->to_user_type   = 1;
+			$response->data           = ['content' => trim($account_setting['auto_reply']), 'content_type' => MessageSendProtocols::CONTENT_TYPE_AUTO_REPLY];
+			$response->time           = time();
+			
+			if ($this->serv->isEstablished($fd)) {
+				return $this->serv->push($fd, $response->encode());
+			}
 		}
 	}
 	
